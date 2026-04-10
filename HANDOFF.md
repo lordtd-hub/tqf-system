@@ -16,6 +16,12 @@
 - [x] ROADMAP_v2.md: วางแผน 3-layer architecture ใหม่ (PLOs + course_clos + course_assessments)
 - [x] ออกแบบ multi-device / multi-AI workflow (ไฟล์นี้ + CODEX_CONTEXT.md)
 - [x] Initialized local Git repository on branch `main` for source tracking
+- [x] database.py: เพิ่ม 3 ตารางใหม่ (`plos`, `course_clos`, `course_assessments`) + CRUD functions
+- [x] database.py: เพิ่ม `copy_course_template_to_tqf3()` — snapshot CLO/assessment template ไป tqf3
+- [x] input_gui.py: เพิ่ม Tab 3 "ฐานข้อมูลหลักสูตร" — PanedWindow, course treeview, detail panel
+- [x] input_gui.py: `CourseAddDialog`, `PLOManagerDialog`, `PLOEditRowDialog` — CRUD PLO/วิชา
+- [x] input_gui.py: `CourseCLOEditor` (CLO tab + Assessment tab), `CLOEditRowDialog`, `AsmtEditRowDialog`
+- [x] Syntax check input_gui.py ✅ OK
 
 ---
 
@@ -30,10 +36,11 @@ _ไม่มีงานค้าง — พร้อมเริ่ม Phase �
 - [ ] ผู้ใช้ให้รายชื่อ PLO ของหลักสูตร 65 และ 69
 
 **ทำได้เลย (ไม่รอ template):**
-- [ ] F2-A: `CourseAddDialog` — form เพิ่มวิชาใหม่ใน GUI
-- [ ] F1: Tab 3 "หลักสูตร & รายวิชา" ใน GUI
-- [ ] Schema: เพิ่มตาราง `plos`, `course_clos`, `course_assessments` + migration
-- [ ] `import_courses_excel.py` — bulk import วิชาจาก Excel
+- [ ] `import_courses_excel.py` — bulk import วิชาจาก Excel (template + parser)
+- [ ] `TQF3GenerateDialog` — UI เลือกวิชา/ปี/เทอม → `copy_course_template_to_tqf3()` → สร้าง tqf3 ใหม่
+- [ ] Tab 3: ทดสอบ + polish UI (ปุ่ม enable/disable, error handling)
+- [ ] Sync course_clos เมื่อ import มคอ.3 ใหม่ (opt-in อัพเดท template)
+- [ ] `generate_tqf5.py` — ทดสอบกับ DB จริง
 
 ---
 
@@ -65,8 +72,4 @@ _ไม่มีงานค้าง — พร้อมเริ่ม Phase �
 - [x] ...
 
 ## 🔵 งานที่ค้างอยู่
-- [ ] (ถ้ามี) อธิบายว่าหยุดตรงไหน และไฟล์/บรรทัดไหน
-
-## 🟡 งานต่อไป
-- [ ] ...
-```
+- [ ] (ถ้ามี) อธิบายว่าหยุดตรงไหน และไฟล์/

@@ -159,6 +159,47 @@ CREATE TABLE IF NOT EXISTS teaching_actual (
     hours_actual        REAL    DEFAULT 0,
     deviation_reason    TEXT    DEFAULT ''
 );
+
+-- ═══════════════════════════════════════════════════════════════════
+-- v2: 3-Layer Architecture  (หลักสูตร → รายวิชา → การเปิดสอน)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ─── PLO ของแต่ละหลักสูตร ─────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS plos (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    curriculum_id   INTEGER NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
+    plo_number      INTEGER NOT NULL,
+    category        TEXT    DEFAULT '',        -- ด้านความรู้ / ทักษะ / จริยธรรม / อื่นๆ
+    description     TEXT    NOT NULL DEFAULT '',
+    UNIQUE(curriculum_id, plo_number)
+);
+
+-- ─── CLO มาตรฐานของวิชา (template ข้ามปี) ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS course_clos (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id           INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    clo_number          INTEGER NOT NULL,
+    description         TEXT    NOT NULL DEFAULT '',
+    domain              TEXT    DEFAULT '',    -- ด้านความรู้ / ทักษะทางปัญญา / ความสัมพันธ์ / ตัวเลข
+    teaching_strategy   TEXT    DEFAULT '',
+    assessment_method   TEXT    DEFAULT '',
+    pass_threshold_pct  REAL    DEFAULT 50.0,  -- เกณฑ์ผ่าน %
+    plo_mapping         TEXT    DEFAULT '[]',  -- JSON: [1,3,4] → PLO number ที่สอดคล้อง
+    UNIQUE(course_id, clo_number)
+);
+
+-- ─── แผนการประเมินมาตรฐานของวิชา (template ข้ามปี) ──────────────────────────
+CREATE TABLE IF NOT EXISTS course_assessments (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id       INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    seq             INTEGER DEFAULT 0,         -- ลำดับสำหรับเรียง
+    name            TEXT    NOT NULL,          -- สอบกลางภาค / สอบปลายภาค / งาน / ฯลฯ
+    full_score      REAL    DEFAULT 100,       -- คะแนนเต็มของรายการนี้
+    weight_pct      REAL    NOT NULL DEFAULT 0,-- น้ำหนัก % (ทุกรายการรวมกัน = 100)
+    clo_mapping     TEXT    DEFAULT '[]',      -- JSON: [clo_number, ...]
+    eval_criteria   TEXT    DEFAULT '',        -- เกณฑ์/รายละเอียดกิจกรรม
+    pass_threshold  REAL    DEFAULT 50.0       -- เกณฑ์ผ่านของรายการนี้ %
+);
 """
 
 
@@ -166,12 +207,16 @@ def init_db():
     """สร้าง schema ถ้ายังไม่มี + migrate คอลัมน์ใหม่"""
     with get_conn() as conn:
         conn.executescript(SCHEMA)
-        # ── Migration: เพิ่ม is_special ถ้า DB เก่ายังไม่มี ──────────────────
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(tqf3)").fetchall()]
-        if "is_special" not in cols:
+        # ── Migration: tqf3 columns ───────────────────────────────────────────
+        cols3 = [r[1] for r in conn.execute("PRAGMA table_info(tqf3)").fetchall()]
+        if "is_special" not in cols3:
             conn.execute(
                 "ALTER TABLE tqf3 ADD COLUMN is_special INTEGER NOT NULL DEFAULT 0")
-            print("[DB] Migration: added tqf3.is_special column")
+            print("[DB] Migration: added tqf3.is_special")
+        if "source_type" not in cols3:
+            conn.execute(
+                "ALTER TABLE tqf3 ADD COLUMN source_type TEXT DEFAULT 'imported'")
+            print("[DB] Migration: added tqf3.source_type")
     print(f"[DB] Initialized: {DB_PATH}")
 
 
@@ -686,6 +731,187 @@ def export_to_excel(output_path: str = None):
     wb.save(output_path)
     print(f"[Excel] Export → {output_path}")
     return output_path
+
+
+# ════════════════════════════════════════════════
+# PLO helpers
+# ════════════════════════════════════════════════
+
+def upsert_plo(curriculum_id: int, plo_number: int,
+               category: str = "", description: str = "") -> int:
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO plos (curriculum_id, plo_number, category, description)
+            VALUES (?,?,?,?)
+            ON CONFLICT(curriculum_id, plo_number) DO UPDATE SET
+                category=excluded.category,
+                description=excluded.description
+        """, (curriculum_id, plo_number, category, description))
+        row = conn.execute(
+            "SELECT id FROM plos WHERE curriculum_id=? AND plo_number=?",
+            (curriculum_id, plo_number)).fetchone()
+        return row["id"]
+
+
+def get_plos(curriculum_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM plos WHERE curriculum_id=? ORDER BY plo_number",
+            (curriculum_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_plo(plo_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM plos WHERE id=?", (plo_id,))
+
+
+def replace_plos(curriculum_id: int, plos_list: list):
+    """plos_list = [{"plo_number":1,"category":"ด้านความรู้","description":"..."}]"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM plos WHERE curriculum_id=?", (curriculum_id,))
+        for p in plos_list:
+            conn.execute("""
+                INSERT INTO plos (curriculum_id, plo_number, category, description)
+                VALUES (?,?,?,?)
+            """, (curriculum_id, p["plo_number"], p.get("category",""), p.get("description","")))
+
+
+# ════════════════════════════════════════════════
+# Course CLO helpers (template)
+# ════════════════════════════════════════════════
+
+def upsert_course_clo(course_id: int, clo_number: int,
+                      description: str = "", domain: str = "",
+                      teaching_strategy: str = "", assessment_method: str = "",
+                      pass_threshold_pct: float = 50.0,
+                      plo_mapping: list = None) -> int:
+    plo_json = json.dumps(plo_mapping or [], ensure_ascii=False)
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO course_clos
+                (course_id, clo_number, description, domain,
+                 teaching_strategy, assessment_method, pass_threshold_pct, plo_mapping)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(course_id, clo_number) DO UPDATE SET
+                description=excluded.description,
+                domain=excluded.domain,
+                teaching_strategy=excluded.teaching_strategy,
+                assessment_method=excluded.assessment_method,
+                pass_threshold_pct=excluded.pass_threshold_pct,
+                plo_mapping=excluded.plo_mapping
+        """, (course_id, clo_number, description, domain,
+              teaching_strategy, assessment_method, pass_threshold_pct, plo_json))
+        row = conn.execute(
+            "SELECT id FROM course_clos WHERE course_id=? AND clo_number=?",
+            (course_id, clo_number)).fetchone()
+        return row["id"]
+
+
+def get_course_clos(course_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM course_clos WHERE course_id=? ORDER BY clo_number",
+            (course_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["plo_mapping"] = json.loads(d.get("plo_mapping", "[]"))
+            result.append(d)
+        return result
+
+
+def replace_course_clos(course_id: int, clos_list: list):
+    """clos_list = [{"clo_number":1,"description":"...","plo_mapping":[1,2],...}]"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM course_clos WHERE course_id=?", (course_id,))
+        for c in clos_list:
+            conn.execute("""
+                INSERT INTO course_clos
+                    (course_id, clo_number, description, domain,
+                     teaching_strategy, assessment_method, pass_threshold_pct, plo_mapping)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (course_id, c["clo_number"], c.get("description",""),
+                  c.get("domain",""), c.get("teaching_strategy",""),
+                  c.get("assessment_method",""), c.get("pass_threshold_pct",50.0),
+                  json.dumps(c.get("plo_mapping",[]), ensure_ascii=False)))
+
+
+# ════════════════════════════════════════════════
+# Course Assessment helpers (template)
+# ════════════════════════════════════════════════
+
+def get_course_assessments(course_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM course_assessments WHERE course_id=? ORDER BY seq, id",
+            (course_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["clo_mapping"] = json.loads(d.get("clo_mapping", "[]"))
+            result.append(d)
+        return result
+
+
+def replace_course_assessments(course_id: int, assessments_list: list):
+    """assessments_list = [{"name":"สอบกลางภาค","full_score":30,"weight_pct":30,...}]"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM course_assessments WHERE course_id=?", (course_id,))
+        for i, a in enumerate(assessments_list):
+            conn.execute("""
+                INSERT INTO course_assessments
+                    (course_id, seq, name, full_score, weight_pct,
+                     clo_mapping, eval_criteria, pass_threshold)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (course_id, i, a.get("name",""), a.get("full_score",100),
+                  a.get("weight_pct",0),
+                  json.dumps(a.get("clo_mapping",[]), ensure_ascii=False),
+                  a.get("eval_criteria",""), a.get("pass_threshold",50.0)))
+
+
+# ════════════════════════════════════════════════
+# Copy course template → tqf3
+# ════════════════════════════════════════════════
+
+def copy_course_template_to_tqf3(course_id: int, tqf3_id: int):
+    """
+    Copy course_clos → clos (tqf3_id)
+    Copy course_assessments → assessments (tqf3_id)
+    ใช้เมื่อ generate มคอ.3 จาก template (source_type='generated')
+    """
+    clos = get_course_clos(course_id)
+    assessments = get_course_assessments(course_id)
+
+    with get_conn() as conn:
+        # ลบ clos เก่า แล้ว copy ใหม่
+        conn.execute("DELETE FROM clos WHERE tqf3_id=?", (tqf3_id,))
+        for c in clos:
+            conn.execute("""
+                INSERT INTO clos
+                    (tqf3_id, clo_number, description,
+                     teaching_strategy, assessment_method,
+                     target_pct)
+                VALUES (?,?,?,?,?,?)
+            """, (tqf3_id, c["clo_number"], c["description"],
+                  c["teaching_strategy"], c["assessment_method"],
+                  c["pass_threshold_pct"]))
+
+        # ลบ assessments เก่า แล้ว copy ใหม่
+        conn.execute("DELETE FROM assessments WHERE tqf3_id=?", (tqf3_id,))
+        for a in assessments:
+            conn.execute("""
+                INSERT INTO assessments (tqf3_id, name, weight_pct, clo_mapping)
+                VALUES (?,?,?,?)
+            """, (tqf3_id, a["name"], a["weight_pct"],
+                  json.dumps(a["clo_mapping"], ensure_ascii=False)))
+
+        # อัพเดท source_type
+        conn.execute(
+            "UPDATE tqf3 SET source_type='generated' WHERE id=?", (tqf3_id,))
+
+    print(f"[DB] Copied course template → tqf3_id={tqf3_id}: "
+          f"{len(clos)} CLOs, {len(assessments)} assessments")
 
 
 if __name__ == "__main__":
