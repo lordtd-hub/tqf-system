@@ -10,6 +10,9 @@ test.db*
 มคอ5_*.docx
 tqf3_*.docx
 
+# ── บังคับ track template แม้ว่า pattern ข้างบนจะ match ──────────────────────
+!templates/แบบฟอร์ม มคอ. 5.docx
+
 # ── Python cache ───────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

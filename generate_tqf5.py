@@ -22,8 +22,9 @@ NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 # ── หา template ──────────────────────────────────────────────────────────────
 _THIS_DIR = Path(__file__).parent
 TEMPLATE_CANDIDATES = [
-    _THIS_DIR / "แบบฟอร์ม มคอ. 5.docx",
-    _THIS_DIR.parent / "แบบฟอร์ม มคอ. 5.docx",
+    _THIS_DIR / "templates" / "แบบฟอร์ม มคอ. 5.docx",   # ← ที่อยู่มาตรฐาน
+    _THIS_DIR / "แบบฟอร์ม มคอ. 5.docx",                  # ← fallback (เวอร์ชันเก่า)
+    _THIS_DIR.parent / "แบบฟอร์ม มคอ. 5.docx",           # ← fallback root
 ]
 
 def find_template() -> Path:
@@ -32,7 +33,7 @@ def find_template() -> Path:
             return p
     raise FileNotFoundError(
         "ไม่พบไฟล์ 'แบบฟอร์ม มคอ. 5.docx' — "
-        f"กรุณาวางไว้ในโฟลเดอร์ {_THIS_DIR} หรือ {_THIS_DIR.parent}"
+        f"กรุณาวางไว้ในโฟลเดอร์ {_THIS_DIR / 'templates'}"
     )
 
 

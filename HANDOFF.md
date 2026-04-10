@@ -23,6 +23,8 @@
 - [x] input_gui.py: `CourseCLOEditor` (CLO tab + Assessment tab), `CLOEditRowDialog`, `AsmtEditRowDialog`
 - [x] Syntax check input_gui.py ✅ OK
 - [x] จัดระเบียบโฟลเดอร์ทั้งหมด (root tqf gen/ + tqf_system/)
+- [x] ย้าย แบบฟอร์ม มคอ. 5.docx → tqf_system/templates/ (เตรียมพร้อมแจกจ่ายให้คนอื่นใช้)
+- [x] generate_tqf5.py: มองหา template ใน templates/ ก่อน (พร้อม fallback เวอร์ชันเก่า)
 
 ---
 
