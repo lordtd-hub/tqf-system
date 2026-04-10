@@ -35,3 +35,4 @@ test_write.txt
 # ── โฟลเดอร์ที่ไม่ต้อง track ─────────────────────────────────────────────────
 test_outputs/
 templates_ref/
+!templates/แบบฟอร์ม มคอ. 3.docx

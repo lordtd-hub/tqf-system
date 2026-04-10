@@ -25,24 +25,24 @@
 - [x] จัดระเบียบโฟลเดอร์ทั้งหมด (root tqf gen/ + tqf_system/)
 - [x] ย้าย แบบฟอร์ม มคอ. 5.docx → tqf_system/templates/ (เตรียมพร้อมแจกจ่ายให้คนอื่นใช้)
 - [x] generate_tqf5.py: มองหา template ใน templates/ ก่อน (พร้อม fallback เวอร์ชันเก่า)
+- [x] วิเคราะห์ `templates_ref/tqf3 Intro to AI.docx` และสรุป field/schema gap ใน `สิ่งที่ต้องแก้_generate_tqf3_schema.md`
 
 ---
 
 ## 🔵 งานที่ค้างอยู่ (In Progress)
-_ไม่มีงานค้าง — พร้อมเริ่ม Phase ถัดไป_
+_ไม่มีงานค้าง — schema ใหม่เสร็จแล้ว พร้อมเริ่ม UI + generate_tqf3.py_
 
 ---
 
 ## 🟡 งานต่อไป (Next Up)
 **รอก่อน:**
-- [ ] ผู้ใช้ให้ template มคอ.3 แบบละเอียด → วิเคราะห์ fields → อัพเดท schema
 - [ ] ผู้ใช้ให้รายชื่อ PLO ของหลักสูตร 65 และ 69
 
-**ทำได้เลย (ไม่รอ template):**
-- [ ] `import_courses_excel.py` — bulk import วิชาจาก Excel (template + parser)
+**ทำได้เลย:**
+- [ ] `generate_tqf3.py` — gen มคอ.3 จาก template `templates/แบบฟอร์ม มคอ. 3.docx` โดยใช้ข้อมูลจาก DB
+- [ ] Tab 3 UI: เพิ่ม teaching plan editor (`course_teaching_plan`) + resources editor (`course_resources`)
 - [ ] `TQF3GenerateDialog` — UI เลือกวิชา/ปี/เทอม → `copy_course_template_to_tqf3()` → สร้าง tqf3 ใหม่
-- [ ] Tab 3: ทดสอบ + polish UI (ปุ่ม enable/disable, error handling)
-- [ ] Sync course_clos เมื่อ import มคอ.3 ใหม่ (opt-in อัพเดท template)
+- [ ] `import_courses_excel.py` — bulk import วิชาจาก Excel
 - [ ] `generate_tqf5.py` — ทดสอบกับ DB จริง
 
 ---
@@ -75,4 +75,5 @@ _ไม่มีงานค้าง — พร้อมเริ่ม Phase �
 - [x] ...
 
 ## 🔵 งานที่ค้างอยู่
-- [ ] (ถ้ามี) อธิบายว่าหยุดตรงไหน และไฟล์/
+- [ ] (ถ้ามี) อธิบายว่าหยุดตรงไหน และไฟล์/ฟังก์ชันที่กำลังทำ
+```

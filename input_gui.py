@@ -66,11 +66,11 @@ class TQFApp(tk.Tk):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=0, pady=0)
 
-        self.tab_courses = tk.Frame(nb, bg=BG)
         self.tab_catalog = tk.Frame(nb, bg=BG)
+        self.tab_courses = tk.Frame(nb, bg=BG)
         self.tab_import  = tk.Frame(nb, bg=BG)
-        nb.add(self.tab_courses, text="  📋  รายวิชาในระบบ  ")
         nb.add(self.tab_catalog, text="  📚  ฐานข้อมูลหลักสูตร  ")
+        nb.add(self.tab_courses, text="  📋  รายวิชาในระบบ  ")
         nb.add(self.tab_import,  text="  📥  นำเข้าข้อมูล  ")
 
         self._build_tab_courses()
