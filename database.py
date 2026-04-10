@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS curricula (
     version         TEXT    NOT NULL UNIQUE,
     name_th         TEXT    DEFAULT '',
     effective_year  INTEGER DEFAULT 0,
+    graduation_req  TEXT    DEFAULT '',
     created_at      TEXT    DEFAULT (datetime('now','localtime'))
 );
 
@@ -269,6 +270,7 @@ def init_db():
         ensure_column("assessments", "pass_threshold", "REAL DEFAULT 50.0")
         ensure_column("course_assessments", "assessment_period", "TEXT DEFAULT ''")
         ensure_column("plos", "plo_code", "TEXT DEFAULT ''")
+        ensure_column("curricula", "graduation_req", "TEXT DEFAULT ''")
 
     print(f"[DB] Initialized: {DB_PATH}")
 
