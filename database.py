@@ -162,9 +162,21 @@ CREATE TABLE IF NOT EXISTS plos (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     curriculum_id   INTEGER NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
     plo_number      INTEGER NOT NULL,
+    plo_code        TEXT    DEFAULT '',
     category        TEXT    DEFAULT '',
     description     TEXT    NOT NULL DEFAULT '',
     UNIQUE(curriculum_id, plo_number)
+);
+
+CREATE TABLE IF NOT EXISTS ylos (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    curriculum_id       INTEGER NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
+    year_number         INTEGER NOT NULL,
+    title               TEXT    NOT NULL DEFAULT '',
+    indicators          TEXT    DEFAULT '',
+    assessment_methods  TEXT    DEFAULT '',
+    plo_mapping         TEXT    DEFAULT '[]',
+    UNIQUE(curriculum_id, year_number)
 );
 
 CREATE TABLE IF NOT EXISTS course_clos (
@@ -256,6 +268,7 @@ def init_db():
         ensure_column("assessments", "eval_criteria", "TEXT DEFAULT ''")
         ensure_column("assessments", "pass_threshold", "REAL DEFAULT 50.0")
         ensure_column("course_assessments", "assessment_period", "TEXT DEFAULT ''")
+        ensure_column("plos", "plo_code", "TEXT DEFAULT ''")
 
     print(f"[DB] Initialized: {DB_PATH}")
 
@@ -860,17 +873,19 @@ def export_to_excel(output_path: str = None):
 
 
 def upsert_plo(curriculum_id: int, plo_number: int,
-               category: str = "", description: str = "") -> int:
+               category: str = "", description: str = "",
+               plo_code: str = "") -> int:
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO plos (curriculum_id, plo_number, category, description)
-            VALUES (?,?,?,?)
+            INSERT INTO plos (curriculum_id, plo_number, plo_code, category, description)
+            VALUES (?,?,?,?,?)
             ON CONFLICT(curriculum_id, plo_number) DO UPDATE SET
+                plo_code=excluded.plo_code,
                 category=excluded.category,
                 description=excluded.description
             """,
-            (curriculum_id, plo_number, category, description),
+            (curriculum_id, plo_number, plo_code or str(plo_number), category, description),
         )
         row = conn.execute(
             "SELECT id FROM plos WHERE curriculum_id=? AND plo_number=?",
@@ -898,12 +913,77 @@ def replace_plos(curriculum_id: int, plos_list: list):
         conn.execute("DELETE FROM plos WHERE curriculum_id=?", (curriculum_id,))
         for plo in plos_list:
             conn.execute(
-                "INSERT INTO plos (curriculum_id, plo_number, category, description) VALUES (?,?,?,?)",
+                """INSERT INTO plos
+                   (curriculum_id, plo_number, plo_code, category, description)
+                   VALUES (?,?,?,?,?)""",
                 (
                     curriculum_id,
                     plo["plo_number"],
+                    plo.get("plo_code", "") or str(plo["plo_number"]),
                     plo.get("category", ""),
                     plo.get("description", ""),
+                ),
+            )
+
+
+# ── YLO CRUD ──────────────────────────────────────────────────────────────────
+
+def upsert_ylo(curriculum_id: int, year_number: int,
+               title: str = "", indicators: str = "",
+               assessment_methods: str = "",
+               plo_mapping: list = None) -> int:
+    plo_json = json.dumps(plo_mapping or [], ensure_ascii=False)
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO ylos (curriculum_id, year_number, title,
+                              indicators, assessment_methods, plo_mapping)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(curriculum_id, year_number) DO UPDATE SET
+                title=excluded.title,
+                indicators=excluded.indicators,
+                assessment_methods=excluded.assessment_methods,
+                plo_mapping=excluded.plo_mapping
+            """,
+            (curriculum_id, year_number, title, indicators, assessment_methods, plo_json),
+        )
+        row = conn.execute(
+            "SELECT id FROM ylos WHERE curriculum_id=? AND year_number=?",
+            (curriculum_id, year_number),
+        ).fetchone()
+        return row["id"]
+
+
+def get_ylos(curriculum_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM ylos WHERE curriculum_id=? ORDER BY year_number",
+            (curriculum_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["plo_mapping"] = json.loads(d.get("plo_mapping", "[]"))
+            result.append(d)
+        return result
+
+
+def replace_ylos(curriculum_id: int, ylos_list: list):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM ylos WHERE curriculum_id=?", (curriculum_id,))
+        for ylo in ylos_list:
+            conn.execute(
+                """INSERT INTO ylos
+                   (curriculum_id, year_number, title, indicators,
+                    assessment_methods, plo_mapping)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    curriculum_id,
+                    ylo["year_number"],
+                    ylo.get("title", ""),
+                    ylo.get("indicators", ""),
+                    ylo.get("assessment_methods", ""),
+                    json.dumps(ylo.get("plo_mapping", []), ensure_ascii=False),
                 ),
             )
 
