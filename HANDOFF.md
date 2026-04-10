@@ -1,0 +1,72 @@
+# HANDOFF — TQF System
+> ไฟล์นี้คือ "กระดานข่าว" ของโปรเจค
+> **อ่านก่อนทำงานทุกครั้ง — อัพเดทหลังทำงานทุก session**
+> ทั้ง Cowork, Codex, และทุกเครื่องใช้ไฟล์นี้เป็น source of truth
+
+---
+
+## 🟢 สถานะล่าสุด
+อัพเดท: 2026-04-10  |  เครื่อง: PC  |  เครื่องมือ: Cowork
+
+### งานที่เสร็จแล้วใน session นี้
+- [x] เพิ่ม `is_special` column ใน `tqf3` + migration + upsert_tqf3
+- [x] import_grades.py: auto-detect P0x section, รับ `is_special` param
+- [x] input_gui.py: แสดง ★ วิชาพิเศษ, radio ปกติ/พิเศษ ใน GradeInfoDialog + CourseEditDialog
+- [x] input_gui.py: เพิ่ม `course_id` hidden column + `btn_edit` + `CourseEditDialog`
+- [x] ROADMAP_v2.md: วางแผน 3-layer architecture ใหม่ (PLOs + course_clos + course_assessments)
+- [x] ออกแบบ multi-device / multi-AI workflow (ไฟล์นี้ + CODEX_CONTEXT.md)
+- [x] Initialized local Git repository on branch `main` for source tracking
+
+---
+
+## 🔵 งานที่ค้างอยู่ (In Progress)
+_ไม่มีงานค้าง — พร้อมเริ่ม Phase ถัดไป_
+
+---
+
+## 🟡 งานต่อไป (Next Up)
+**รอก่อน:**
+- [ ] ผู้ใช้ให้ template มคอ.3 แบบละเอียด → วิเคราะห์ fields → อัพเดท schema
+- [ ] ผู้ใช้ให้รายชื่อ PLO ของหลักสูตร 65 และ 69
+
+**ทำได้เลย (ไม่รอ template):**
+- [ ] F2-A: `CourseAddDialog` — form เพิ่มวิชาใหม่ใน GUI
+- [ ] F1: Tab 3 "หลักสูตร & รายวิชา" ใน GUI
+- [ ] Schema: เพิ่มตาราง `plos`, `course_clos`, `course_assessments` + migration
+- [ ] `import_courses_excel.py` — bulk import วิชาจาก Excel
+
+---
+
+## 🔴 ข้อควรระวัง / Known Issues
+- **DB path มีช่องว่าง**: `tqf gen/` → SQLite ใน sandbox เปิดไม่ได้ตรงๆ ต้อง copy ไป `/tmp/` ก่อนทดสอบ บน Windows production ใช้ได้ปกติ
+- **LibreOffice**: import_tqf3.py ต้องใช้ LibreOffice แปลง .doc → .docx ถ้าไม่มีจะ error (import_grades.py มี native RTF parser ของตัวเอง)
+- **tqf3 UNIQUE**: `(course_id, semester, year, is_special)` — วิชาพิเศษ (P0x) กับปกติ (N0x) เก็บแยก record
+
+---
+
+## 📁 ไฟล์ Reference สำคัญ
+| ไฟล์ | ใช้ทำอะไร |
+|------|-----------|
+| `PROJECT_REFERENCE.md` | Schema ทั้งหมด, ERD, function list |
+| `ROADMAP_v2.md` | แผนพัฒนา v2 (3-layer architecture) |
+| `RULES.md` | กฎการทำงานสำหรับ AI ทุกตัว |
+| `CODEX_CONTEXT.md` | Context สำหรับ Codex โดยเฉพาะ |
+| `HANDOFF.md` | ไฟล์นี้ — สถานะปัจจุบัน |
+
+---
+
+## 📋 Template อัพเดทไฟล์นี้ (ทำทุกครั้งหลังทำงาน)
+
+```markdown
+## 🟢 สถานะล่าสุด
+อัพเดท: YYYY-MM-DD  |  เครื่อง: PC/MacBook  |  เครื่องมือ: Cowork/Codex
+
+### งานที่เสร็จแล้วใน session นี้
+- [x] ...
+
+## 🔵 งานที่ค้างอยู่
+- [ ] (ถ้ามี) อธิบายว่าหยุดตรงไหน และไฟล์/บรรทัดไหน
+
+## 🟡 งานต่อไป
+- [ ] ...
+```

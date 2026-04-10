@@ -1,0 +1,30 @@
+# ── Database (อย่า commit ไฟล์ DB — sync ผ่าน cloud folder แทน) ──────────────
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+test.db*
+
+# ── ไฟล์ output ที่ generate ได้ใหม่เสมอ ─────────────────────────────────────
+*.xlsx
+มคอ5_*.docx
+tqf3_*.docx
+
+# ── Python cache ───────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# ── OS / Editor ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ── Temp / test files ──────────────────────────────────────────────────────────
+test_write.txt
+*.tmp
