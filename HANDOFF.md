@@ -22,6 +22,7 @@
 - [x] input_gui.py: `CourseAddDialog`, `PLOManagerDialog`, `PLOEditRowDialog` — CRUD PLO/วิชา
 - [x] input_gui.py: `CourseCLOEditor` (CLO tab + Assessment tab), `CLOEditRowDialog`, `AsmtEditRowDialog`
 - [x] Syntax check input_gui.py ✅ OK
+- [x] จัดระเบียบโฟลเดอร์ทั้งหมด (root tqf gen/ + tqf_system/)
 
 ---
 
