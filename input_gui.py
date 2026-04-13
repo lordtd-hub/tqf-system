@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # STYLES
 # ══════════════════════════════════════════════════════
 BG        = "#F4F6F9"
+FG        = "#1a1a1a"
 BLUE_DARK = "#1F4E79"
 BLUE      = "#2E75B6"
 BLUE_LITE = "#DEEAF1"
@@ -27,6 +28,81 @@ FONT_SM   = ("Arial", 9)
 FONT_H    = ("Arial", 12, "bold")
 
 
+def _build_wrapped_checklist(
+    parent,
+    *,
+    items,
+    selected_values,
+    text_fn,
+    value_fn,
+    empty_text,
+    columns=4,
+    height=96,
+):
+    """Render a multi-column checklist that wraps and scrolls vertically."""
+    if not items:
+        tk.Label(parent, text=empty_text, bg=BG, fg=GRAY, font=FONT_SM).pack(
+            anchor="w"
+        )
+        return {}
+
+    selected = set(selected_values or [])
+    shell = tk.Frame(parent, bg=BG)
+    shell.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(shell, bg=BG, highlightthickness=0, bd=0, height=height)
+    vsb = ttk.Scrollbar(shell, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=vsb.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    vsb.pack(side="right", fill="y")
+
+    inner = tk.Frame(canvas, bg=BG)
+    window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _sync_scroll_region(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.itemconfigure(window_id, width=canvas.winfo_width())
+
+    inner.bind("<Configure>", _sync_scroll_region)
+    canvas.bind("<Configure>", _sync_scroll_region)
+
+    vars_map = {}
+    for idx, item in enumerate(items):
+        value = value_fn(item)
+        var = tk.BooleanVar(value=(value in selected))
+        vars_map[value] = var
+        col = idx % columns
+        row = idx // columns
+        tk.Checkbutton(
+            inner,
+            text=text_fn(item),
+            variable=var,
+            bg=BG,
+            font=FONT_SM,
+            cursor="hand2",
+            activebackground=BG,
+            anchor="w",
+        ).grid(row=row, column=col, sticky="w", padx=(0, 12), pady=2)
+        inner.grid_columnconfigure(col, weight=1)
+    return vars_map
+
+
+def _offering_matches_search(row, raw_query):
+    query = (raw_query or "").strip().lower()
+    if not query:
+        return True
+    haystack = " ".join(
+        [
+            str(row.get("code", "")),
+            str(row.get("name_th", "")),
+            str(row.get("section_code", "")),
+            str(row.get("status", "")),
+            str(row.get("source_type", "")),
+        ]
+    ).lower()
+    return query in haystack
+
+
 # ══════════════════════════════════════════════════════
 # MAIN APP
 # ══════════════════════════════════════════════════════
@@ -34,8 +110,8 @@ class TQFApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("ระบบ TQF — สาขาคณิตศาสตร์ มรส.")
-        self.geometry("860x620")
-        self.minsize(760, 500)
+        self.geometry("960x680")
+        self.minsize(840, 540)
         self.configure(bg=BG)
         self._build_ui()
         self.after(300, self._refresh_courses)
@@ -84,40 +160,53 @@ class TQFApp(tk.Tk):
         tab = self.tab_courses
 
         # ── Toolbar ──────────────────────────────────
-        bar = tk.Frame(tab, bg=BG)
-        bar.pack(fill="x", padx=16, pady=(12, 6))
-        tk.Label(bar, text="รายวิชาทั้งหมดในฐานข้อมูล",
+        self.curriculum_var = tk.StringVar(value="ทั้งหมด")
+        self.cat_term_sem_var = tk.StringVar(value="1")
+        self.cat_term_year_var = tk.StringVar(value="2569")
+        toolbar = tk.Frame(tab, bg=BG)
+        toolbar.pack(fill="x", padx=16, pady=(12, 6))
+
+        top_row = tk.Frame(toolbar, bg=BG)
+        top_row.pack(fill="x")
+        tk.Label(top_row, text="รายวิชาทั้งหมดในฐานข้อมูล",
                  bg=BG, font=FONT_H, fg=BLUE_DARK).pack(side="left")
 
-        self.curriculum_var = tk.StringVar(value="ทั้งหมด")
-        filter_frame = tk.Frame(bar, bg=BG)
-        filter_frame.pack(side="right", padx=(0, 8))
+        filter_frame = tk.Frame(top_row, bg=BG)
+        filter_frame.pack(side="right")
         tk.Label(filter_frame, text="หลักสูตร:", bg=BG, font=FONT_SM).pack(side="left")
         self.curriculum_combo = ttk.Combobox(
             filter_frame, textvariable=self.curriculum_var,
             values=["ทั้งหมด"], width=8, state="readonly")
         self.curriculum_combo.pack(side="left", padx=(4, 8))
         self.curriculum_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_courses())
-        tk.Button(bar, text="🔄  รีเฟรช", bg=BLUE, fg=WHITE,
+        tk.Button(filter_frame, text="รีเฟรช", bg=BLUE, fg=WHITE,
                   font=FONT_B, relief="flat", padx=12, pady=4,
                   cursor="hand2", activebackground=BLUE_DARK, activeforeground=WHITE,
-                  command=self._refresh_courses).pack(side="right")
-        self.btn_gen = tk.Button(
-            bar, text="📄  สร้าง มคอ.5", bg="#6C3483", fg=WHITE,
-            font=FONT_B, relief="flat", padx=14, pady=4,
-            cursor="hand2", activebackground="#4A235A", activeforeground=WHITE,
-            state="disabled", command=self._generate_tqf5)
-        self.btn_gen.pack(side="right", padx=(0, 8))
+                  command=self._refresh_courses).pack(side="left")
 
-        # ปุ่มแก้ไขข้อมูล
+        action_row = tk.Frame(toolbar, bg=BG)
+        action_row.pack(fill="x", pady=(8, 0))
         self.btn_edit = tk.Button(
-            bar, text="✏️  แก้ไขข้อมูล", bg="#2E7D32", fg=WHITE,
+            action_row, text="แก้ไขข้อมูล", bg="#2E7D32", fg=WHITE,
             font=FONT_B, relief="flat", padx=14, pady=4,
             cursor="hand2", activebackground="#1B5E20", activeforeground=WHITE,
             state="disabled", command=self._edit_course)
-        self.btn_edit.pack(side="right", padx=(0, 6))
+        self.btn_edit.pack(side="left", padx=(0, 6))
+        self.btn_gen = tk.Button(
+            action_row, text="สร้าง มคอ.5", bg="#6C3483", fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4,
+            cursor="hand2", activebackground="#4A235A", activeforeground=WHITE,
+            state="disabled", command=self._generate_tqf5)
+        self.btn_gen.pack(side="left", padx=(0, 8))
+        tk.Label(
+            action_row,
+            text="เลือกวิชาจากตารางเพื่อแก้ไขข้อมูลหรือสร้าง มคอ.5",
+            bg=BG,
+            fg=GRAY,
+            font=FONT_SM,
+            anchor="w",
+        ).pack(side="left", padx=(8, 0))
 
-        # ── PanedWindow แบ่งบน (ตาราง) / ล่าง (รายละเอียด) ──
         paned = tk.PanedWindow(tab, orient="vertical", bg=BG,
                                sashwidth=6, sashrelief="flat",
                                sashpad=2, opaqueresize=True)
@@ -276,6 +365,7 @@ class TQFApp(tk.Tk):
                        COALESCE(cu.version, '?') AS cur_ver,
                        t.semester, t.year,
                        t.source_file,
+                       COALESCE(t.source_type, '') AS source_type,
                        t.id AS tqf3_id,
                        COALESCE(t.is_special, 0) AS is_special,
                        COALESCE(t5.registered_count, 0) AS students,
@@ -293,7 +383,7 @@ class TQFApp(tk.Tk):
             conn.close()
 
             for r in rows:
-                has_tqf3  = bool(r["source_file"] and r["clo_count"] > 0)
+                has_tqf3  = bool((r["source_file"] or r["source_type"] == "generated") and r["clo_count"] > 0)
                 has_grade = bool(r["has_grade"] and r["students"] > 0)
 
                 tqf3_icon  = "✅" if has_tqf3  else "—"
@@ -326,9 +416,9 @@ class TQFApp(tk.Tk):
                 ))
 
             total = len(rows)
-            has_data = sum(1 for r in rows if r["source_file"])
+            has_data = sum(1 for r in rows if r["source_file"] or r["source_type"] == "generated")
             ready    = sum(1 for r in rows
-                           if r["source_file"] and r["clo_count"] > 0
+                           if (r["source_file"] or r["source_type"] == "generated") and r["clo_count"] > 0
                            and r["has_grade"] and r["students"] > 0)
             self.status_var.set(
                 f"รายวิชา {total} วิชา  |  มีข้อมูล มคอ.3: {has_data}  |  พร้อมสร้าง มคอ.5: {ready}")
@@ -547,16 +637,18 @@ class TQFApp(tk.Tk):
                 import database as db; db.init_db()
                 from generate_tqf5 import generate_tqf5_docx
                 result = generate_tqf5_docx(int(tqf3_id), out_path)
-                self.after(0, lambda: messagebox.showinfo(
+                success_msg = f"สร้าง มคอ.5 เสร็จแล้ว\n{out_path}"
+                self.after(0, lambda msg=success_msg: messagebox.showinfo(
                     "สำเร็จ",
-                    f"สร้าง มคอ.5 เสร็จแล้ว\n{out_path}",
+                    msg,
                     parent=self))
             except Exception as e:
                 import traceback
                 err = traceback.format_exc()
-                self.after(0, lambda: messagebox.showerror(
+                error_msg = f"สร้าง มคอ.5 ไม่สำเร็จ:\n{e}"
+                self.after(0, lambda msg=error_msg: messagebox.showerror(
                     "เกิดข้อผิดพลาด",
-                    f"สร้าง มคอ.5 ไม่สำเร็จ:\n{e}", parent=self))
+                    msg, parent=self))
 
         threading.Thread(target=do, daemon=True).start()
 
@@ -567,44 +659,150 @@ class TQFApp(tk.Tk):
         tab = self.tab_catalog
 
         # ── Toolbar ──────────────────────────────────
-        bar = tk.Frame(tab, bg=BG)
-        bar.pack(fill="x", padx=16, pady=(12, 6))
-
-        tk.Label(bar, text="หลักสูตร:", bg=BG, font=FONT_B).pack(side="left")
         self.cat_cur_var = tk.StringVar(value="ทั้งหมด")
-        self.cat_cur_combo = ttk.Combobox(
-            bar, textvariable=self.cat_cur_var, values=["ทั้งหมด"],
-            width=10, state="readonly")
-        self.cat_cur_combo.pack(side="left", padx=(4, 12))
-        self.cat_cur_combo.bind("<<ComboboxSelected>>",
-                                lambda e: self._refresh_catalog())
+        toolbar = tk.Frame(tab, bg=BG)
+        toolbar.pack(fill="x", padx=16, pady=(12, 6))
 
-        # ปุ่มขวา
-        tk.Button(bar, text="📚  PLO", bg="#5C4033", fg=WHITE,
+        top_row = tk.Frame(toolbar, bg=BG)
+        top_row.pack(fill="x")
+        tk.Label(top_row, text="ฐานข้อมูลหลักสูตร / รายวิชา",
+                 bg=BG, font=FONT_H, fg=BLUE_DARK).pack(side="left")
+
+        filter_frame = tk.Frame(top_row, bg=BG)
+        filter_frame.pack(side="right")
+        tk.Label(filter_frame, text="หลักสูตร:", bg=BG, font=FONT_SM).pack(side="left")
+        self.cat_cur_combo = ttk.Combobox(
+            filter_frame, textvariable=self.cat_cur_var, values=["ทั้งหมด"],
+            width=10, state="readonly")
+        self.cat_cur_combo.pack(side="left", padx=(4, 8))
+        self.cat_cur_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda e: (self._refresh_catalog(), self._refresh_catalog_offerings()),
+        )
+        tk.Button(filter_frame, text="รีเฟรช", bg=BLUE, fg=WHITE,
                   font=FONT_B, relief="flat", padx=12, pady=4,
-                  cursor="hand2", activebackground="#3E2723", activeforeground=WHITE,
-                  command=self._manage_plos).pack(side="right", padx=(0, 6))
-        self.btn_cat_del = tk.Button(
-            bar, text="🗑  ลบวิชา", bg=RED, fg=WHITE,
+                  cursor="hand2", activebackground=BLUE_DARK, activeforeground=WHITE,
+                  command=self._refresh_catalog).pack(side="left")
+
+        self.cat_offering_search_var = tk.StringVar(value="")
+        offering_filter_row = tk.Frame(toolbar, bg=BG)
+        offering_filter_row.pack(fill="x", pady=(8, 0))
+        tk.Label(offering_filter_row, text="รายวิชาที่เปิดสอน:", bg=BG,
+                 fg=BLUE_DARK, font=FONT_B).pack(side="left")
+        tk.Label(offering_filter_row, text="ภาคเรียน", bg=BG,
+                 font=FONT_SM).pack(side="left", padx=(12, 4))
+        sem_combo = ttk.Combobox(
+            offering_filter_row,
+            textvariable=self.cat_term_sem_var,
+            values=["1", "2", "3"],
+            width=4,
+            state="readonly",
+        )
+        sem_combo.pack(side="left")
+        sem_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_catalog_offerings())
+        tk.Label(offering_filter_row, text="ปีการศึกษา", bg=BG,
+                 font=FONT_SM).pack(side="left", padx=(12, 4))
+        year_combo = ttk.Combobox(
+            offering_filter_row,
+            textvariable=self.cat_term_year_var,
+            values=["2567", "2568", "2569", "2570"],
+            width=8,
+            state="normal",
+        )
+        year_combo.pack(side="left")
+        year_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_catalog_offerings())
+        year_combo.bind("<Return>", lambda e: self._refresh_catalog_offerings())
+        tk.Button(
+            offering_filter_row, text="แสดงข้อมูล", bg="#455A64", fg=WHITE,
             font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._delete_catalog_course)
-        self.btn_cat_del.pack(side="right", padx=(0, 6))
-        self.btn_cat_clo = tk.Button(
-            bar, text="📝  แก้ไข CLO", bg="#1565C0", fg=WHITE,
-            font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_course_clos)
-        self.btn_cat_clo.pack(side="right", padx=(0, 6))
-        self.btn_cat_edit = tk.Button(
-            bar, text="✏️  แก้ไขวิชา", bg=BLUE, fg=WHITE,
-            font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_catalog_course)
-        self.btn_cat_edit.pack(side="right", padx=(0, 6))
-        tk.Button(bar, text="＋  เพิ่มวิชา", bg=GREEN, fg=WHITE,
+            cursor="hand2", command=self._refresh_catalog_offerings
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(offering_filter_row, text="ค้นหา", bg=BG,
+                 font=FONT_SM).pack(side="left", padx=(12, 4))
+        self.cat_offering_search_entry = tk.Entry(
+            offering_filter_row,
+            textvariable=self.cat_offering_search_var,
+            width=24,
+            font=FONT,
+            relief="solid",
+            bd=1,
+        )
+        self.cat_offering_search_entry.pack(side="left")
+        self.cat_offering_search_entry.bind(
+            "<KeyRelease>", lambda e: self._refresh_catalog_offerings()
+        )
+        self.btn_cat_add_offering = tk.Button(
+            offering_filter_row, text="เปิดสอนวิชาที่เลือก", bg=GREEN, fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4,
+            cursor="hand2", state="disabled", command=self._add_course_offering
+        )
+        self.btn_cat_add_offering.pack(side="right")
+        tk.Label(
+            offering_filter_row,
+            text="ใช้ตัวกรองนี้เพื่อจัดการรายวิชาที่เปิดสอนจริงในแต่ละภาคเรียน",
+            bg=BG, fg=GRAY, font=FONT_SM, anchor="w",
+        ).pack(side="left", padx=(12, 0))
+
+        action_row = tk.Frame(toolbar, bg=BG)
+        action_row.pack(fill="x", pady=(8, 0))
+        tk.Button(action_row, text="เพิ่มวิชา", bg=GREEN, fg=WHITE,
                   font=FONT_B, relief="flat", padx=14, pady=4,
                   cursor="hand2", activebackground="#0B5E0B", activeforeground=WHITE,
-                  command=self._add_catalog_course).pack(side="right", padx=(0, 6))
+                  command=self._add_catalog_course).pack(side="left", padx=(0, 6))
+        self.btn_cat_edit = tk.Button(
+            action_row, text="แก้ไขวิชา", bg=BLUE, fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_catalog_course)
+        self.btn_cat_edit.pack(side="left", padx=(0, 6))
+        self.btn_cat_clo = tk.Button(
+            action_row, text="แก้ไข CLO", bg="#1565C0", fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_course_clos)
+        self.btn_cat_clo.pack(side="left", padx=(0, 6))
+        self.btn_cat_plan = tk.Button(
+            action_row, text="แผนการสอน", bg="#00838F", fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_course_teaching_plan)
+        self.btn_cat_plan.pack(side="left", padx=(0, 6))
+        self.btn_cat_gen3 = tk.Button(
+            action_row, text="สร้าง มคอ.3", bg="#6C3483", fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._generate_tqf3)
+        self.btn_cat_gen3.pack(side="left", padx=(0, 6))
+        self.btn_cat_del = tk.Button(
+            action_row, text="ลบวิชา", bg=RED, fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._delete_catalog_course)
+        self.btn_cat_del.pack(side="left", padx=(0, 6))
+        self.btn_cat_res = tk.Button(
+            action_row, text="ทรัพยากร", bg="#00695C", fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_course_resources)
+        self.btn_cat_res.pack(side="left", padx=(0, 6))
+        self.btn_cat_staff = tk.Button(
+            action_row, text="บุคลากร มคอ.3", bg="#4527A0", fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_course_staff)
+        self.btn_cat_staff.pack(side="left", padx=(0, 6))
+        self.btn_cat_gen3.pack_forget()
+        self.btn_cat_staff.pack_forget()
+        tk.Button(action_row, text="PLO", bg="#5C4033", fg=WHITE,
+                  font=FONT_B, relief="flat", padx=12, pady=4,
+                  cursor="hand2", activebackground="#3E2723", activeforeground=WHITE,
+                  command=self._manage_plos).pack(side="left", padx=(12, 6))
+        tk.Button(action_row, text="ข้อมูลหลักสูตร", bg="#37474F", fg=WHITE,
+                  font=FONT_B, relief="flat", padx=12, pady=4,
+                  cursor="hand2", activebackground="#263238", activeforeground=WHITE,
+                  command=self._show_curriculum_overview).pack(side="left")
+        tk.Label(
+            action_row,
+            text="ปุ่มจัดการหลักอยู่แถวนี้เพื่อไม่ให้เบียดพื้นที่ตาราง",
+            bg=BG,
+            fg=GRAY,
+            font=FONT_SM,
+            anchor="w",
+        ).pack(side="left", padx=(12, 0))
 
-        # ── PanedWindow ──────────────────────────────
         paned = tk.PanedWindow(tab, orient="horizontal", bg=BG,
                                sashwidth=6, sashrelief="flat", opaqueresize=True)
         paned.pack(fill="both", expand=True, padx=16, pady=(0, 4))
@@ -613,9 +811,18 @@ class TQFApp(tk.Tk):
         left = tk.Frame(paned, bg=BG)
         paned.add(left, minsize=300, stretch="never")
 
+        left_split = tk.PanedWindow(
+            left, orient="vertical", bg=BG,
+            sashwidth=6, sashrelief="flat", opaqueresize=True
+        )
+        left_split.pack(fill="both", expand=True)
+
+        course_frame = tk.Frame(left, bg=BG)
+        left_split.add(course_frame, minsize=180, stretch="always")
+
         cat_cols = ("code", "name", "credits", "type", "clo_count", "course_id")
         self.cat_tree = ttk.Treeview(
-            left, columns=cat_cols, show="headings",
+            course_frame, columns=cat_cols, show="headings",
             selectmode="browse", height=20)
         cat_heads = {
             "code":      ("รหัสวิชา",  90, "center"),
@@ -630,10 +837,67 @@ class TQFApp(tk.Tk):
             self.cat_tree.column(col, width=width, anchor=anchor,
                                  minwidth=0 if col == "course_id" else 40)
         self.cat_tree.bind("<<TreeviewSelect>>", self._on_catalog_select)
-        cat_vsb = ttk.Scrollbar(left, orient="vertical", command=self.cat_tree.yview)
+        cat_vsb = ttk.Scrollbar(course_frame, orient="vertical", command=self.cat_tree.yview)
         self.cat_tree.configure(yscrollcommand=cat_vsb.set)
         self.cat_tree.pack(side="left", fill="both", expand=True)
         cat_vsb.pack(side="right", fill="y")
+
+        offering_frame = tk.Frame(left, bg=BG)
+        left_split.add(offering_frame, minsize=170, stretch="always")
+
+        tk.Label(
+            offering_frame, text="รายวิชาที่เปิดสอน", bg=BG,
+            fg=BLUE_DARK, font=FONT_B, anchor="w"
+        ).pack(fill="x", pady=(0, 4))
+
+        tk.Label(
+            offering_frame,
+            text="เลือกแถวในตาราง แล้วใช้ปุ่มจัดการทางด้านขวา",
+            bg=BG,
+            fg=GRAY,
+            font=FONT_SM,
+            anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        offering_cols = ("code", "name", "section", "kind", "tqf3", "status", "offering_id", "course_id", "tqf3_id")
+        self.cat_offering_tree = ttk.Treeview(
+            offering_frame, columns=offering_cols, show="headings",
+            selectmode="browse", height=8
+        )
+        offering_heads = {
+            "code": ("รหัส", 80, "center"),
+            "name": ("รายวิชา", 145, "w"),
+            "section": ("ตอนเรียน", 62, "center"),
+            "kind": ("ประเภท", 58, "center"),
+            "tqf3": ("TQF3", 48, "center"),
+            "status": ("สถานะ", 90, "w"),
+            "offering_id": ("", 0, "center"),
+            "course_id": ("", 0, "center"),
+            "tqf3_id": ("", 0, "center"),
+        }
+        hidden_cols = {"offering_id", "course_id", "tqf3_id"}
+        for col, (heading, width, anchor) in offering_heads.items():
+            self.cat_offering_tree.heading(col, text=heading)
+            self.cat_offering_tree.column(
+                col, width=width, anchor=anchor,
+                minwidth=0 if col in hidden_cols else 40
+            )
+        self.cat_offering_tree.bind("<<TreeviewSelect>>", self._on_catalog_offering_select)
+        self.cat_offering_tree.bind("<Double-1>", self._on_catalog_offering_select)
+        self.cat_offering_tree.tag_configure("odd", background=WHITE)
+        self.cat_offering_tree.tag_configure("even", background="#F7FAFC")
+        offering_vsb = ttk.Scrollbar(
+            offering_frame, orient="vertical", command=self.cat_offering_tree.yview
+        )
+        self.cat_offering_tree.configure(yscrollcommand=offering_vsb.set)
+        self.cat_offering_tree.pack(side="left", fill="both", expand=True)
+        offering_vsb.pack(side="right", fill="y")
+
+        self.cat_offering_status_var = tk.StringVar(value="")
+        tk.Label(
+            offering_frame, textvariable=self.cat_offering_status_var,
+            bg=BG, fg=GRAY, font=FONT_SM, anchor="w"
+        ).pack(fill="x", pady=(4, 0))
 
         # ── ขวา: รายละเอียด ──────────────────────────
         right = tk.Frame(paned, bg=WHITE,
@@ -646,6 +910,49 @@ class TQFApp(tk.Tk):
             det_hdr, text="  เลือกวิชาในตารางเพื่อดูรายละเอียด",
             bg=BLUE_LITE, fg=BLUE_DARK, font=FONT_B, anchor="w")
         self.cat_detail_title.pack(fill="x", padx=8, pady=4)
+
+        context_frame = tk.LabelFrame(
+            right,
+            text="จัดการการเปิดสอนที่เลือก",
+            bg=WHITE,
+            fg=BLUE_DARK,
+            font=FONT_B,
+            padx=10,
+            pady=8,
+        )
+        context_frame.pack(fill="x", padx=10, pady=(10, 6))
+        self.cat_offering_context_var = tk.StringVar(
+            value="เลือกการเปิดสอนในตารางเพื่อสร้าง มคอ.3 หรือจัดการข้อมูลรายเทอม"
+        )
+        tk.Label(
+            context_frame,
+            textvariable=self.cat_offering_context_var,
+            bg=WHITE,
+            fg=GRAY,
+            font=FONT_SM,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x")
+        context_buttons = tk.Frame(context_frame, bg=WHITE)
+        context_buttons.pack(fill="x", pady=(8, 0))
+        self.btn_cat_offering_gen3 = tk.Button(
+            context_buttons, text="สร้าง มคอ.3", bg="#6C3483", fg=WHITE,
+            font=FONT_B, relief="flat", padx=10, pady=4,
+            cursor="hand2", state="disabled", command=self._generate_selected_offering_tqf3
+        )
+        self.btn_cat_offering_gen3.pack(side="left", padx=(0, 6))
+        self.btn_cat_offering_staff = tk.Button(
+            context_buttons, text="บุคลากร มคอ.3", bg="#4527A0", fg=WHITE,
+            font=FONT_B, relief="flat", padx=10, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_selected_offering_staff
+        )
+        self.btn_cat_offering_staff.pack(side="left", padx=(0, 6))
+        self.btn_cat_del_offering = tk.Button(
+            context_buttons, text="ลบการเปิดสอน", bg=RED, fg=WHITE,
+            font=FONT_B, relief="flat", padx=10, pady=4,
+            cursor="hand2", state="disabled", command=self._delete_course_offering
+        )
+        self.btn_cat_del_offering.pack(side="left")
 
         self.cat_detail_text = tk.Text(
             right, font=("Consolas", 9), bg=WHITE, fg="#212121",
@@ -661,6 +968,11 @@ class TQFApp(tk.Tk):
         self.cat_detail_text.tag_config("dim", foreground=GRAY)
         self.cat_detail_text.tag_config("ok",  foreground="#1B5E20")
         self.cat_detail_text.tag_config("warn", foreground="#E65100")
+        self.cat_detail_text.tag_config("plo_num", foreground="#1565C0",
+                                        font=("Arial", 9, "bold"))
+        self.cat_detail_text.tag_config("ylo_num", foreground="#4A148C",
+                                        font=("Arial", 9, "bold"))
+        self.cat_detail_text.tag_config("sub",  foreground="#546E7A")
         cat_vsb2.pack(side="right", fill="y")
         self.cat_detail_text.pack(side="left", fill="both", expand=True)
 
@@ -671,6 +983,7 @@ class TQFApp(tk.Tk):
                  fill="x", padx=18, pady=(0, 6))
 
         self.after(350, self._refresh_catalog)
+        self.after(450, self._refresh_catalog_offerings)
 
     def _refresh_catalog(self):
         for item in self.cat_tree.get_children():
@@ -715,8 +1028,149 @@ class TQFApp(tk.Tk):
             has_clo = sum(1 for r in rows if r["clo_cnt"] > 0)
             self.cat_status_var.set(
                 f"รายวิชา {n} วิชา  |  มี CLO มาตรฐาน {has_clo} วิชา")
+
+            # auto-show curriculum overview เมื่อเลือกหลักสูตรเฉพาะ
+            if filt != "ทั้งหมด":
+                curr_row = next(
+                    (r for r in curricula
+                     if str(r["version"]) == filt.replace("หลักสูตร ", "").strip()),
+                    None)
+                if curr_row:
+                    self._load_curriculum_overview(curr_row["id"])
+                    return
+            self._clear_cat_detail()
         except Exception as e:
             self.cat_status_var.set(f"❌ โหลดไม่ได้: {e}")
+
+    def _catalog_term_context(self):
+        curriculum_id = None
+        filt = self.cat_cur_var.get()
+        try:
+            import database as db; db.init_db()
+            with sqlite3.connect(db.DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                if filt != "เธ—เธฑเนเธเธซเธกเธ”":
+                    ver = filt.replace("เธซเธฅเธฑเธเธชเธนเธ•เธฃ ", "").strip()
+                    row = conn.execute(
+                        "SELECT id FROM curricula WHERE version=?",
+                        (ver,),
+                    ).fetchone()
+                    if row:
+                        curriculum_id = row["id"]
+        except Exception:
+            curriculum_id = None
+
+        try:
+            semester = int(self.cat_term_sem_var.get())
+        except Exception:
+            semester = None
+        try:
+            year = int(self.cat_term_year_var.get())
+        except Exception:
+            year = None
+        return curriculum_id, semester, year
+
+    def _refresh_catalog_offerings(self, preserve_offering_id=None):
+        for item in self.cat_offering_tree.get_children():
+            self.cat_offering_tree.delete(item)
+
+        curriculum_id, semester, year = self._catalog_term_context()
+        if semester is None or year is None:
+            self.cat_offering_status_var.set("กรุณาระบุภาคเรียนและปีการศึกษาให้ถูกต้อง")
+            return
+
+        try:
+            import database as db; db.init_db()
+            offerings = db.get_course_offerings(
+                curriculum_id=curriculum_id,
+                semester=semester,
+                year=year,
+            )
+        except Exception as e:
+            self.cat_offering_status_var.set(f"โหลด offerings ไม่ได้: {e}")
+            return
+
+        selected_item = None
+        search_query = self.cat_offering_search_var.get().strip()
+        visible_count = 0
+        for row in offerings:
+            if not _offering_matches_search(row, search_query):
+                continue
+            tqf3_flag = "มี" if row.get("tqf3_id") else "-"
+            kind = "พิเศษ" if row.get("is_special") else "ปกติ"
+            status_map = {
+                "generated": "สร้างจากระบบ",
+                "imported": "นำเข้า",
+                "catalog": "จากแม่แบบ",
+                "active": "เปิดสอน",
+                "planned": "วางแผน",
+            }
+            status = status_map.get(row.get("source_type") or row.get("status"), row.get("source_type") or row.get("status") or "-")
+            item_id = str(row["id"])
+            row_tag = "even" if visible_count % 2 == 0 else "odd"
+            self.cat_offering_tree.insert(
+                "",
+                "end",
+                iid=item_id,
+                values=(
+                    row.get("code", ""),
+                    row.get("name_th", "") or "-",
+                    row.get("section_code", "") or "-",
+                    kind,
+                    tqf3_flag,
+                    status,
+                    row["id"],
+                    row.get("course_id", ""),
+                    row.get("tqf3_id", "") or "",
+                ),
+                tags=(row_tag,),
+            )
+            visible_count += 1
+            if preserve_offering_id and row["id"] == preserve_offering_id:
+                selected_item = item_id
+
+        self.cat_offering_status_var.set(
+            f"การเปิดสอน {len(offerings)} รายวิชา ในภาค {semester}/{year}"
+        )
+        if search_query:
+            self.cat_offering_status_var.set(
+                f"พบ {visible_count} / {len(offerings)} รายการ ในภาค {semester}/{year}"
+            )
+        if selected_item:
+            self.cat_offering_tree.selection_set(selected_item)
+            self.cat_offering_tree.focus(selected_item)
+            self.cat_offering_tree.see(selected_item)
+        self._on_catalog_offering_select()
+
+    def _focus_catalog_course(self, course_id: int):
+        target = str(course_id)
+        for item in self.cat_tree.get_children():
+            vals = self.cat_tree.item(item, "values")
+            if len(vals) >= 6 and str(vals[5]) == target:
+                self.cat_tree.selection_set(item)
+                self.cat_tree.focus(item)
+                self.cat_tree.see(item)
+                return vals
+        return None
+
+    def _selected_catalog_offering(self):
+        sel = self.cat_offering_tree.selection()
+        if not sel:
+            return None
+        vals = self.cat_offering_tree.item(sel[0], "values")
+        if len(vals) < 9:
+            return None
+        return {
+            "code": vals[0],
+            "name": vals[1],
+            "section_code": vals[2],
+            "kind": vals[3],
+            "tqf3_flag": vals[4],
+            "status": vals[5],
+            "offering_id": int(vals[6]),
+            "course_id": int(vals[7]),
+            "tqf3_id": int(vals[8]) if str(vals[8]).strip() else None,
+        }
 
     def _on_catalog_select(self, event=None):
         sel = self.cat_tree.selection()
@@ -724,12 +1178,45 @@ class TQFApp(tk.Tk):
         self.btn_cat_edit.config(state=state)
         self.btn_cat_del.config(state=state)
         self.btn_cat_clo.config(state=state)
+        self.btn_cat_plan.config(state=state)
+        self.btn_cat_gen3.config(state=state)
+        self.btn_cat_res.config(state=state)
+        self.btn_cat_staff.config(state=state)
+        self.btn_cat_add_offering.config(state=state)
         if not sel:
-            self._clear_cat_detail(); return
+            self._clear_cat_detail()
+            return
 
         vals = self.cat_tree.item(sel[0], "values")
         course_id = int(vals[5])
         self._load_cat_detail(course_id, vals)
+
+    def _on_catalog_offering_select(self, event=None):
+        offering = self._selected_catalog_offering()
+        has_offering = offering is not None
+        self.btn_cat_offering_gen3.config(state="normal" if has_offering else "disabled")
+        self.btn_cat_offering_staff.config(
+            state="normal" if has_offering and offering.get("tqf3_id") else "disabled"
+        )
+        self.btn_cat_del_offering.config(
+            state="normal" if has_offering and not offering.get("tqf3_id") else "disabled"
+        )
+        if not offering:
+            if hasattr(self, "cat_offering_context_var"):
+                self.cat_offering_context_var.set(
+                    "เลือกการเปิดสอนในตารางเพื่อสร้าง มคอ.3 หรือจัดการข้อมูลรายเทอม"
+                )
+            return
+
+        if hasattr(self, "cat_offering_context_var"):
+            tqf3_text = "มี มคอ.3 แล้ว" if offering.get("tqf3_id") else "ยังไม่มี มคอ.3"
+            self.cat_offering_context_var.set(
+                f"{offering['code']} {offering['section_code']} | {offering['status']} | {tqf3_text}"
+            )
+
+        vals = self._focus_catalog_course(offering["course_id"])
+        if vals:
+            self._load_cat_detail(offering["course_id"], vals)
 
     def _clear_cat_detail(self):
         self.cat_detail_text.configure(state="normal")
@@ -754,6 +1241,9 @@ class TQFApp(tk.Tk):
                 (course_id,)).fetchall()
             asmt = conn.execute(
                 "SELECT * FROM course_assessments WHERE course_id=? ORDER BY seq,id",
+                (course_id,)).fetchall()
+            plan_rows = conn.execute(
+                "SELECT * FROM course_teaching_plan WHERE course_id=? ORDER BY seq, week, id",
                 (course_id,)).fetchall()
             # ดึง plos สำหรับ mapping
             plo_map = {}
@@ -819,6 +1309,28 @@ class TQFApp(tk.Tk):
             t.insert("end", "  ยังไม่มี CLO มาตรฐาน — กด 📝 แก้ไข CLO เพื่อเพิ่ม\n", "warn")
 
         # ── แผนการประเมิน ──
+        total_hours = sum((r["hours_planned"] or 0) for r in plan_rows)
+        t.insert("end", f"\nแผนการสอนรายสัปดาห์ ({len(plan_rows)} แถว  รวม {total_hours:.0f} ชม.)\n", "h1")
+        t.insert("end", "โ”€" * 60 + "\n", "dim")
+        if plan_rows:
+            for row in plan_rows[:8]:
+                label = row["week_label"] or row["week"] or "โ€”"
+                topic = row["topic"] or "(ยังไม่ระบุหัวข้อ)"
+                llo = row["llo_text"] or "โ€”"
+                method = row["teaching_method"] or row["activities"] or "โ€”"
+                t.insert("end", f"  {label:<10}", "h2")
+                t.insert("end", f"{topic}\n")
+                t.insert(
+                    "end",
+                    f"       LLO: {llo}  |  สอน: {method}"
+                    f"  |  ชั่วโมง: {(row['hours_planned'] or 0):.0f}\n",
+                    "dim",
+                )
+            if len(plan_rows) > 8:
+                t.insert("end", f"  ... และอีก {len(plan_rows) - 8} แถว\n", "dim")
+        else:
+            t.insert("end", "  ยังไม่มีแผนการสอน โ€” กด แผนการสอน เพื่อเพิ่ม\n", "warn")
+
         total_w = sum(a["weight_pct"] for a in asmt)
         t.insert("end", f"\nแผนการประเมิน ({len(asmt)} รายการ  รวม {total_w:.0f}%)\n", "h1")
         t.insert("end", "─" * 60 + "\n", "dim")
@@ -843,6 +1355,165 @@ class TQFApp(tk.Tk):
         self.cat_detail_text.insert("end", msg)
         self.cat_detail_text.configure(state="disabled")
 
+    def _load_cat_detail(self, course_id: int, vals):
+        self.cat_detail_title.config(text=f"  {vals[0]}  {vals[1]}")
+        try:
+            import database as db
+
+            db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT c.*, cu.version AS cur_ver "
+                "FROM courses c LEFT JOIN curricula cu ON cu.id=c.curriculum_id "
+                "WHERE c.id=?",
+                (course_id,),
+            ).fetchone()
+            clos = conn.execute(
+                "SELECT * FROM course_clos WHERE course_id=? ORDER BY clo_number",
+                (course_id,),
+            ).fetchall()
+            asmt = conn.execute(
+                "SELECT * FROM course_assessments WHERE course_id=? ORDER BY seq,id",
+                (course_id,),
+            ).fetchall()
+            plan_rows = conn.execute(
+                "SELECT * FROM course_teaching_plan WHERE course_id=? ORDER BY seq, week, id",
+                (course_id,),
+            ).fetchall()
+            offerings = conn.execute(
+                """
+                SELECT
+                    o.semester,
+                    o.year,
+                    o.section_code,
+                    o.is_special,
+                    o.status,
+                    o.source_type,
+                    t.id AS tqf3_id
+                FROM course_offerings o
+                LEFT JOIN tqf3 t ON t.offering_id = o.id
+                WHERE o.course_id=?
+                ORDER BY o.year DESC, o.semester DESC, o.section_code
+                """,
+                (course_id,),
+            ).fetchall()
+            conn.close()
+        except Exception as e:
+            self._set_cat_detail(f"โหลดไม่ได้: {e}")
+            return
+
+        t = self.cat_detail_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+
+        divider = "-" * 60 + "\n"
+        cr = dict(course) if course else {}
+
+        t.insert("end", "ข้อมูลทั่วไป\n", "h1")
+        t.insert("end", divider, "dim")
+        t.insert("end", f"หลักสูตร  : {cr.get('cur_ver', '?')}\n")
+        t.insert("end", f"รหัสวิชา  : {cr.get('code', '')}\n")
+        t.insert("end", f"ชื่อไทย   : {cr.get('name_th', '')}\n")
+        t.insert("end", f"ชื่ออังกฤษ: {cr.get('name_en', '') or '-'}\n")
+        t.insert(
+            "end",
+            f"หน่วยกิต  : {cr.get('credits_text', '') or '-'}"
+            f"  (บรรยาย-ปฏิบัติ-ค้นคว้า: "
+            f"{cr.get('credit_lecture', 0)}-{cr.get('credit_lab', 0)}-{cr.get('credit_self', 0)})\n",
+        )
+        t.insert("end", f"ประเภท    : {cr.get('course_type', '') or '-'}\n")
+        t.insert("end", f"บังคับก่อน: {cr.get('prerequisite', '') or 'ไม่มี'}\n")
+        if cr.get("description_th"):
+            t.insert("end", f"คำอธิบาย  : {cr['description_th']}\n")
+
+        t.insert("end", f"\nการเปิดสอน ({len(offerings)} ครั้ง)\n", "h1")
+        t.insert("end", divider, "dim")
+        if offerings:
+            for row in offerings:
+                special = " [พิเศษ]" if row["is_special"] else ""
+                section = f" {row['section_code']}" if row["section_code"] else ""
+                source_map = {
+                    "generated": "สร้างจากระบบ",
+                    "imported": "นำเข้า",
+                    "catalog": "จากแม่แบบ",
+                }
+                source_label = source_map.get(row["source_type"], row["source_type"] or "")
+                source = f" ({source_label})" if source_label else ""
+                tqf3_mark = " มี มคอ.3" if row["tqf3_id"] else ""
+                special = " [พิเศษ]" if row["is_special"] else ""
+                display_line = f"  ภาค {row['semester']}/{row['year']}{section}{special}{source}{tqf3_mark}\n"
+                t.insert("end", display_line, "ok")
+                continue
+                t.insert(
+                    "end",
+                    f"  เธ เธฒเธ {row['semester']}/{row['year']}{section}{special}{source}{tqf3_mark}\n",
+                    "ok",
+                )
+                continue
+                t.insert("end", f"  ภาค {row['semester']}/{row['year']}{special}{source}\n", "ok")
+        else:
+            t.insert("end", "  ยังไม่เคยเปิดสอน\n", "dim")
+
+        t.insert("end", f"\nCLO มาตรฐาน ({len(clos)} ข้อ)\n", "h1")
+        t.insert("end", divider, "dim")
+        if clos:
+            for row in clos:
+                plo_nums = json.loads(row["plo_mapping"] if row["plo_mapping"] else "[]")
+                plo_str = ", ".join(f"PLO{p}" for p in plo_nums) if plo_nums else "-"
+                t.insert("end", f"CLO{row['clo_number']}  ", "h2")
+                t.insert("end", f"{row['description'] or '(ยังไม่มีคำอธิบาย)'}\n")
+                t.insert(
+                    "end",
+                    f"       ตอบสนอง: {plo_str}  |  "
+                    f"เกณฑ์ผ่าน: {row['pass_threshold_pct']:.0f}%  |  "
+                    f"วิธีสอน: {row['teaching_strategy'] or '-'}\n",
+                    "dim",
+                )
+        else:
+            t.insert("end", "  ยังไม่มี CLO มาตรฐาน - กด แก้ไข CLO เพื่อเพิ่ม\n", "warn")
+
+        total_hours = sum((row["hours_planned"] or 0) for row in plan_rows)
+        t.insert("end", f"\nแผนการสอนรายสัปดาห์ ({len(plan_rows)} แถว  รวม {total_hours:.0f} ชม.)\n", "h1")
+        t.insert("end", divider, "dim")
+        if plan_rows:
+            for row in plan_rows[:8]:
+                label = row["week_label"] or row["week"] or "-"
+                topic = row["topic"] or "(ยังไม่ระบุหัวข้อ)"
+                llo = row["llo_text"] or "-"
+                method = row["teaching_method"] or row["activities"] or "-"
+                t.insert("end", f"  {label:<10}", "h2")
+                t.insert("end", f"{topic}\n")
+                t.insert(
+                    "end",
+                    f"       LLO: {llo}  |  สอน: {method}"
+                    f"  |  ชั่วโมง: {(row['hours_planned'] or 0):.0f}\n",
+                    "dim",
+                )
+            if len(plan_rows) > 8:
+                t.insert("end", f"  ... และอีก {len(plan_rows) - 8} แถว\n", "dim")
+        else:
+            t.insert("end", "  ยังไม่มีแผนการสอน - กด แผนการสอน เพื่อเพิ่ม\n", "warn")
+
+        total_w = sum(row["weight_pct"] for row in asmt)
+        t.insert("end", f"\nแผนการประเมิน ({len(asmt)} รายการ  รวม {total_w:.0f}%)\n", "h1")
+        t.insert("end", divider, "dim")
+        if asmt:
+            for row in asmt:
+                t.insert("end", f"  {row['name']:<20}", "h2")
+                t.insert(
+                    "end",
+                    f"  คะแนนเต็ม {row['full_score']:.0f}  |  "
+                    f"น้ำหนัก {row['weight_pct']:.0f}%  |  "
+                    f"ผ่าน {row['pass_threshold']:.0f}%\n",
+                )
+            if abs(total_w - 100) > 0.5:
+                t.insert("end", f"  รวม {total_w:.0f}% (ควรได้ 100%)\n", "warn")
+        else:
+            t.insert("end", "  ยังไม่มีแผนการประเมิน\n", "dim")
+
+        t.configure(state="disabled")
+
     def _add_catalog_course(self):
         try:
             import database as db; db.init_db()
@@ -861,6 +1532,7 @@ class TQFApp(tk.Tk):
                 import database as db; db.init_db()
                 db.upsert_course(**dlg.result)
                 self._refresh_catalog()
+                self._refresh_catalog_offerings()
                 self._refresh_courses()
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
@@ -903,7 +1575,9 @@ class TQFApp(tk.Tk):
                       dlg.result.get("description_th",""), dlg.result["curriculum_id"],
                       course_id))
                 conn.commit(); conn.close()
-                self._refresh_catalog(); self._refresh_courses()
+                self._refresh_catalog()
+                self._refresh_catalog_offerings()
+                self._refresh_courses()
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
 
@@ -922,7 +1596,9 @@ class TQFApp(tk.Tk):
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("DELETE FROM courses WHERE id=?", (course_id,))
             conn.commit(); conn.close()
-            self._refresh_catalog(); self._refresh_courses()
+            self._refresh_catalog()
+            self._refresh_catalog_offerings()
+            self._refresh_courses()
         except Exception as e:
             messagebox.showerror("ข้อผิดพลาด", f"ลบไม่สำเร็จ: {e}", parent=self)
 
@@ -957,6 +1633,372 @@ class TQFApp(tk.Tk):
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
 
+    def _edit_course_teaching_plan(self):
+        sel = self.cat_tree.selection()
+        if not sel:
+            return
+        vals = self.cat_tree.item(sel[0], "values")
+        course_id = int(vals[5])
+        try:
+            import database as db; db.init_db()
+            plan_rows = db.get_course_teaching_plan(course_id)
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT code, name_th FROM courses WHERE id=?", (course_id,)
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("เธเนเธญเธเธดเธ”เธเธฅเธฒเธ”", f"เนเธซเธฅเธ”เนเธกเนเนเธ”เน: {e}", parent=self)
+            return
+
+        dlg = CourseTeachingPlanDialog(self, course, [dict(r) for r in plan_rows])
+        if dlg.result is not None:
+            try:
+                import database as db; db.init_db()
+                db.replace_course_teaching_plan(course_id, dlg.result)
+                self._load_cat_detail(course_id, vals)
+            except Exception as e:
+                messagebox.showerror("เธเนเธญเธเธดเธ”เธเธฅเธฒเธ”", f"เธเธฑเธเธ—เธถเธเนเธกเนเธชเธณเน€เธฃเนเธ: {e}", parent=self)
+
+    def _add_course_offering(self):
+        sel = self.cat_tree.selection()
+        if not sel:
+            return
+        vals = self.cat_tree.item(sel[0], "values")
+        course_id = int(vals[5])
+
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT id, code, name_th, curriculum_id FROM courses WHERE id=?",
+                (course_id,),
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดข้อมูลรายวิชาไม่สำเร็จ: {e}", parent=self)
+            return
+
+        if not course:
+            return
+
+        dlg = CourseOfferingDialog(
+            self,
+            course,
+            semester_default=self.cat_term_sem_var.get(),
+            year_default=self.cat_term_year_var.get(),
+        )
+        if not dlg.result:
+            return
+
+        try:
+            import database as db; db.init_db()
+            offering_id = db.upsert_course_offering(
+                course_id,
+                dlg.result["semester"],
+                dlg.result["year"],
+                curriculum_id=course["curriculum_id"],
+                section_code=dlg.result["section_code"],
+                is_special=dlg.result["is_special"],
+                status=dlg.result["status"],
+                source_type="catalog",
+            )
+            self.cat_term_sem_var.set(str(dlg.result["semester"]))
+            self.cat_term_year_var.set(str(dlg.result["year"]))
+            self._refresh_catalog_offerings(preserve_offering_id=offering_id)
+            self._refresh_courses()
+            self._load_cat_detail(course_id, vals)
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"บันทึกการเปิดสอนไม่สำเร็จ: {e}", parent=self)
+
+    def _delete_course_offering(self):
+        offering = self._selected_catalog_offering()
+        if not offering:
+            return
+        if offering.get("tqf3_id"):
+            messagebox.showinfo(
+                "ไม่สามารถลบได้",
+                "การเปิดสอนนี้มีข้อมูล มคอ.3 แล้ว จึงยังลบไม่ได้ในขั้นตอนนี้",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "ยืนยันการลบ",
+            f"ต้องการลบการเปิดสอน {offering['code']} {offering['section_code']} ใช่หรือไม่?",
+            parent=self,
+        ):
+            return
+        try:
+            import database as db; db.init_db()
+            with sqlite3.connect(db.DB_PATH) as conn:
+                conn.execute("DELETE FROM course_offerings WHERE id=?", (offering["offering_id"],))
+            self._refresh_catalog_offerings()
+            self._refresh_courses()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ลบการเปิดสอนไม่สำเร็จ: {e}", parent=self)
+
+    def _generate_selected_offering_tqf3(self):
+        offering = self._selected_catalog_offering()
+        if not offering:
+            return
+
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT o.*, c.code, c.name_th, c.curriculum_id
+                FROM course_offerings o
+                JOIN courses c ON c.id=o.course_id
+                WHERE o.id=?
+                """,
+                (offering["offering_id"],),
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดข้อมูลการเปิดสอนไม่สำเร็จ: {e}", parent=self)
+            return
+
+        if not row:
+            messagebox.showerror("ข้อผิดพลาด", "ไม่พบข้อมูลการเปิดสอน", parent=self)
+            return
+
+        suffix = f"_{row['section_code']}" if row["section_code"] else ""
+        out_path = filedialog.asksaveasfilename(
+            title=f"บันทึก มคอ.3 - {row['code']}",
+            defaultextension=".docx",
+            initialfile=f"มคอ3_{row['code']}_{row['semester']}_{row['year']}{suffix}.docx",
+            filetypes=[("Word Document", "*.docx")],
+        )
+        if not out_path:
+            return
+
+        def do():
+            try:
+                import database as db; db.init_db()
+                from generate_tqf3 import generate_tqf3_docx
+
+                tqf3_id = offering.get("tqf3_id")
+                if not tqf3_id:
+                    tqf3_id = db.upsert_tqf3(
+                        row["course_id"],
+                        row["semester"],
+                        row["year"],
+                        is_special=bool(row["is_special"]),
+                        offering_id=row["id"],
+                        section_code=row["section_code"],
+                    )
+                    db.copy_course_template_to_tqf3(row["course_id"], tqf3_id)
+
+                generate_tqf3_docx(tqf3_id=tqf3_id, output_path=out_path)
+                success_msg = f"สร้าง มคอ.3 สำเร็จ\n{out_path}"
+                self.after(0, lambda msg=success_msg: messagebox.showinfo("สำเร็จ", msg, parent=self))
+                self.after(0, self._refresh_catalog)
+                self.after(0, lambda oid=row["id"]: self._refresh_catalog_offerings(preserve_offering_id=oid))
+                self.after(0, self._refresh_courses)
+                vals = self._focus_catalog_course(row["course_id"])
+                if vals:
+                    self.after(0, lambda v=vals, cid=row["course_id"]: self._load_cat_detail(cid, v))
+            except Exception as e:
+                error_msg = f"สร้าง มคอ.3 ไม่สำเร็จ:\n{e}"
+                self.after(0, lambda msg=error_msg: messagebox.showerror("ข้อผิดพลาด", msg, parent=self))
+
+        threading.Thread(target=do, daemon=True).start()
+
+    def _edit_selected_offering_staff(self):
+        offering = self._selected_catalog_offering()
+        if not offering:
+            return
+        if not offering.get("tqf3_id"):
+            messagebox.showinfo(
+                "ยังไม่มี มคอ.3",
+                "กรุณาสร้าง มคอ.3 ของการเปิดสอนนี้ก่อน แล้วจึงแก้ไขข้อมูลบุคลากร",
+                parent=self,
+            )
+            return
+
+        try:
+            import database as db; db.init_db()
+            with sqlite3.connect(db.DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                course = conn.execute(
+                    "SELECT code, name_th FROM courses WHERE id=?",
+                    (offering["course_id"],),
+                ).fetchone()
+                tqf3_row = conn.execute(
+                    "SELECT id, semester, year, is_special FROM tqf3 WHERE id=?",
+                    (offering["tqf3_id"],),
+                ).fetchone()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดข้อมูลบุคลากรไม่สำเร็จ: {e}", parent=self)
+            return
+
+        dlg = TQF3StaffDialog(self, course, [dict(tqf3_row)])
+        if dlg.result is not None:
+            try:
+                import database as db; db.init_db()
+                db.replace_tqf3_staff(dlg.result["tqf3_id"], dlg.result["staff"])
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"บันทึกข้อมูลบุคลากรไม่สำเร็จ: {e}", parent=self)
+
+    def _generate_tqf3(self):
+        offering = self._selected_catalog_offering()
+        if offering:
+            self._generate_selected_offering_tqf3()
+            return
+
+        sel = self.cat_tree.selection()
+        if not sel:
+            return
+        vals = self.cat_tree.item(sel[0], "values")
+        course_id = int(vals[5])
+
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT code, name_th FROM courses WHERE id=?", (course_id,)
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดข้อมูลวิชาไม่ได้: {e}", parent=self)
+            return
+
+        if not course:
+            messagebox.showerror("ข้อผิดพลาด", "ไม่พบข้อมูลวิชาที่เลือก", parent=self)
+            return
+
+        dlg = TQF3GenerateDialog(self, course)
+        if not dlg.result:
+            return
+
+        sem = dlg.result["semester"]
+        year = dlg.result["year"]
+        is_special = dlg.result["is_special"]
+        suffix = "_P" if is_special else ""
+        out_path = filedialog.asksaveasfilename(
+            title=f"บันทึก มคอ.3 — {course['code']}",
+            defaultextension=".docx",
+            initialfile=f"มคอ3_{course['code']}_{sem}_{year}{suffix}.docx",
+            filetypes=[("Word Document", "*.docx")],
+        )
+        if not out_path:
+            return
+
+        def do():
+            try:
+                import database as db; db.init_db()
+                from generate_tqf3 import generate_tqf3_docx
+
+                conn = sqlite3.connect(db.DB_PATH)
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    SELECT id FROM tqf3
+                    WHERE course_id=? AND semester=? AND year=? AND is_special=?
+                    """,
+                    (course_id, sem, year, int(is_special)),
+                ).fetchone()
+                if row:
+                    tqf3_id = row["id"]
+                else:
+                    tqf3_id = db.upsert_tqf3(
+                        course_id,
+                        sem,
+                        year,
+                        is_special=is_special,
+                    )
+                conn.close()
+
+                db.copy_course_template_to_tqf3(course_id, tqf3_id)
+                generate_tqf3_docx(tqf3_id=tqf3_id, output_path=out_path)
+                success_msg = f"สร้าง มคอ.3 เสร็จแล้ว\n{out_path}"
+                self.after(0, lambda msg=success_msg: messagebox.showinfo(
+                    "สำเร็จ",
+                    msg,
+                    parent=self))
+                self.after(0, self._refresh_catalog)
+                self.after(0, self._refresh_courses)
+                self.after(0, lambda: self._load_cat_detail(course_id, vals))
+            except Exception as e:
+                error_msg = f"สร้าง มคอ.3 ไม่สำเร็จ:\n{e}"
+                self.after(0, lambda msg=error_msg: messagebox.showerror(
+                    "เกิดข้อผิดพลาด",
+                    msg,
+                    parent=self))
+
+        threading.Thread(target=do, daemon=True).start()
+
+    def _edit_course_resources(self):
+        sel = self.cat_tree.selection()
+        if not sel:
+            return
+        vals = self.cat_tree.item(sel[0], "values")
+        course_id = int(vals[5])
+        try:
+            import database as db; db.init_db()
+            resources = db.get_course_resources(course_id)
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT code, name_th FROM courses WHERE id=?", (course_id,)
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดไม่ได้: {e}", parent=self)
+            return
+        dlg = CourseResourcesDialog(self, course, [dict(r) for r in resources])
+        if dlg.result is not None:
+            try:
+                import database as db; db.init_db()
+                db.replace_course_resources(course_id, dlg.result)
+                self._load_cat_detail(course_id, vals)
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
+
+    def _edit_course_staff(self):
+        offering = self._selected_catalog_offering()
+        if offering:
+            self._edit_selected_offering_staff()
+            return
+
+        sel = self.cat_tree.selection()
+        if not sel:
+            return
+        vals = self.cat_tree.item(sel[0], "values")
+        course_id = int(vals[5])
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT code, name_th FROM courses WHERE id=?", (course_id,)
+            ).fetchone()
+            tqf3_records = conn.execute(
+                "SELECT id, semester, year, is_special FROM tqf3 WHERE course_id=? ORDER BY year DESC, semester DESC",
+                (course_id,)
+            ).fetchall()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดไม่ได้: {e}", parent=self)
+            return
+        if not tqf3_records:
+            messagebox.showinfo("แจ้งเตือน",
+                f"ยังไม่มีข้อมูล มคอ.3 ของวิชา {vals[0]}\nกรุณาสร้าง มคอ.3 ก่อน",
+                parent=self)
+            return
+        dlg = TQF3StaffDialog(self, course, [dict(r) for r in tqf3_records])
+        if dlg.result is not None:
+            try:
+                import database as db; db.init_db()
+                db.replace_tqf3_staff(dlg.result["tqf3_id"], dlg.result["staff"])
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
+
     def _manage_plos(self):
         filt = self.cat_cur_var.get()
         if filt == "ทั้งหมด":
@@ -982,6 +2024,145 @@ class TQFApp(tk.Tk):
                 db.replace_plos(curr["id"], dlg.result)
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
+
+    def _show_curriculum_overview(self):
+        """โหลดและแสดงข้อมูลหลักสูตรที่เลือกใน detail panel"""
+        filt = self.cat_cur_var.get()
+        if filt == "ทั้งหมด":
+            messagebox.showinfo("แจ้งเตือน",
+                "กรุณาเลือกหลักสูตรก่อน\nแล้วกด 📊 ข้อมูลหลักสูตร", parent=self)
+            return
+        ver = filt.replace("หลักสูตร ", "").strip()
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            curr = conn.execute(
+                "SELECT * FROM curricula WHERE version=?", (ver,)).fetchone()
+            conn.close()
+        except Exception as e:
+            self._set_cat_detail(f"❌ โหลดไม่ได้: {e}"); return
+        if not curr:
+            self._set_cat_detail("ไม่พบข้อมูลหลักสูตร"); return
+        # ล้าง selection ในตาราง
+        for item in self.cat_tree.selection():
+            self.cat_tree.selection_remove(item)
+        self.btn_cat_edit.config(state="disabled")
+        self.btn_cat_del.config(state="disabled")
+        self.btn_cat_clo.config(state="disabled")
+        self.btn_cat_plan.config(state="disabled")
+        self.btn_cat_gen3.config(state="disabled")
+        self.btn_cat_res.config(state="disabled")
+        self.btn_cat_staff.config(state="disabled")
+        self.btn_cat_add_offering.config(state="disabled")
+        self.btn_cat_offering_gen3.config(state="disabled")
+        self.btn_cat_offering_staff.config(state="disabled")
+        self.btn_cat_del_offering.config(state="disabled")
+        self._load_curriculum_overview(curr["id"])
+
+    def _load_curriculum_overview(self, curriculum_id: int):
+        """แสดง PLO / YLO / เกณฑ์จบ ของหลักสูตรใน detail panel"""
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            curr = conn.execute(
+                "SELECT * FROM curricula WHERE id=?", (curriculum_id,)).fetchone()
+            plos = db.get_plos(curriculum_id)
+            ylos = db.get_ylos(curriculum_id)
+            conn.close()
+        except Exception as e:
+            self._set_cat_detail(f"❌ โหลดไม่ได้: {e}"); return
+
+        if not curr:
+            self._set_cat_detail("ไม่พบข้อมูลหลักสูตร"); return
+
+        cr = dict(curr)
+        self.cat_detail_title.config(
+            text=f"  📊  หลักสูตรที่ {cr['version']}  —  {cr.get('name_th','')}")
+
+        t = self.cat_detail_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+
+        # ── ข้อมูลทั่วไป ──
+        t.insert("end", "ข้อมูลหลักสูตร\n", "h1")
+        t.insert("end", "─" * 62 + "\n", "dim")
+        t.insert("end", f"หลักสูตร  : {cr.get('version','')}\n")
+        t.insert("end", f"ชื่อ      : {cr.get('name_th','') or '—'}\n")
+        t.insert("end", f"ปีที่เริ่ม : {cr.get('effective_year','') or '—'}\n")
+
+        # ── PLOs ──
+        t.insert("end", f"\nผลลัพธ์การเรียนรู้ของหลักสูตร (PLOs)  —  {len(plos)} ข้อ\n", "h1")
+        t.insert("end", "─" * 62 + "\n", "dim")
+        if plos:
+            for p in plos:
+                p = dict(p)
+                plo_label = f"PLO {p.get('plo_code') or p['plo_number']}"
+                cat = f"  [{p['category']}]" if p.get("category") else ""
+                t.insert("end", f"  {plo_label:<9}", "plo_num")
+                t.insert("end", f"{p.get('description','') or '(ยังไม่มีคำอธิบาย)'}")
+                if cat:
+                    t.insert("end", cat, "dim")
+                t.insert("end", "\n")
+        else:
+            t.insert("end", "  ยังไม่มีข้อมูล PLO — กด 📚 PLO เพื่อเพิ่ม\n", "warn")
+
+        # ── YLOs ──
+        t.insert("end", f"\nผลลัพธ์การเรียนรู้รายชั้นปี (YLOs)  —  {len(ylos)} ชั้นปี\n", "h1")
+        t.insert("end", "─" * 62 + "\n", "dim")
+        if ylos:
+            for y in ylos:
+                y = dict(y)
+                t.insert("end", f"  ชั้นปีที่ {y['year_number']}  ", "ylo_num")
+                t.insert("end", f"{y.get('title','')}\n")
+                # PLO mapping
+                plo_map_raw = y.get("plo_mapping") or "[]"
+                try:
+                    plo_map = json.loads(plo_map_raw) if isinstance(plo_map_raw, str) else plo_map_raw
+                except Exception:
+                    plo_map = []
+                if plo_map:
+                    plo_str = ", ".join(f"PLO {p}" for p in plo_map)
+                    t.insert("end", f"     PLOs: {plo_str}\n", "dim")
+                # Indicators (แสดงสูงสุด 3 บรรทัด)
+                indicators = y.get("indicators") or ""
+                if indicators:
+                    lines = [ln.strip() for ln in indicators.split("\n") if ln.strip()]
+                    for line in lines[:3]:
+                        t.insert("end", f"     • {line}\n", "sub")
+                    if len(lines) > 3:
+                        t.insert("end", f"     … (+{len(lines)-3} รายการ)\n", "dim")
+                # Assessment methods
+                asmt = y.get("assessment_methods") or ""
+                if asmt:
+                    t.insert("end", f"     ประเมิน: {asmt[:80]}\n", "sub")
+                t.insert("end", "\n")
+        else:
+            t.insert("end", "  ยังไม่มีข้อมูล YLO\n", "dim")
+
+        # ── เกณฑ์จบการศึกษา ──
+        t.insert("end", "เกณฑ์จบการศึกษา\n", "h1")
+        t.insert("end", "─" * 62 + "\n", "dim")
+        grad_raw = cr.get("graduation_req") or "{}"
+        try:
+            grad = json.loads(grad_raw) if grad_raw else {}
+        except Exception:
+            grad = {}
+        if grad:
+            if "digital_score_min_pct" in grad:
+                t.insert("end",
+                    f"  คะแนนดิจิทัลขั้นต่ำ  : {grad['digital_score_min_pct']}%\n")
+            if "english_req" in grad:
+                t.insert("end",
+                    f"  ภาษาอังกฤษ          : {grad['english_req']}\n")
+            if "rubric_required" in grad:
+                val = "ต้องผ่าน ✅" if grad["rubric_required"] else "ไม่บังคับ"
+                t.insert("end", f"  Rubric             : {val}\n")
+        else:
+            t.insert("end", "  ยังไม่มีข้อมูลเกณฑ์จบ\n", "dim")
+
+        t.configure(state="disabled")
 
     # ══════════════════════════════════════════════════
     # TAB 3: นำเข้าข้อมูล
@@ -1159,10 +2340,12 @@ class TQFApp(tk.Tk):
             try:
                 import database as db
                 db.export_to_excel(path)
-                self.after(0, lambda: messagebox.showinfo(
-                    "สำเร็จ", f"Export เสร็จแล้ว\n{path}"))
+                success_msg = f"Export เสร็จแล้ว\n{path}"
+                self.after(0, lambda msg=success_msg: messagebox.showinfo(
+                    "สำเร็จ", msg))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("ผิดพลาด", str(e)))
+                error_msg = str(e)
+                self.after(0, lambda msg=error_msg: messagebox.showerror("ผิดพลาด", msg))
         threading.Thread(target=do, daemon=True).start()
 
 
@@ -1261,10 +2444,177 @@ class GradeInfoDialog(tk.Toplevel):
         self.destroy()
 
 
+class CourseOfferingDialog(tk.Toplevel):
+    SECTION_CHOICES = ["N01", "P01"]
+    STATUS_CHOICES = ["active", "planned"]
+
+    def __init__(self, parent, course, semester_default="1", year_default="2569"):
+        super().__init__(parent)
+        self.title("เพิ่มการเปิดสอน")
+        self.geometry("420x270")
+        self.resizable(False, False)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.result = None
+
+        code = course["code"] if course else "?"
+        name = course["name_th"] if course else ""
+
+        tk.Label(
+            self, text=f"{code}  {name}", bg=BG, fg=BLUE_DARK,
+            font=FONT_B, wraplength=380
+        ).pack(padx=16, pady=(16, 6), anchor="w")
+        tk.Label(
+            self,
+            text="กำหนดข้อมูลการเปิดสอนจริงของรายวิชานี้",
+            bg=BG, fg=GRAY, font=FONT_SM
+        ).pack(padx=16, anchor="w")
+
+        form = tk.Frame(self, bg=BG)
+        form.pack(padx=16, pady=14, fill="x")
+
+        tk.Label(form, text="ภาคเรียน *", bg=BG, font=FONT_B).grid(row=0, column=0, sticky="w", pady=7)
+        self.sem_var = tk.StringVar(value=str(semester_default or "1"))
+        ttk.Combobox(
+            form, textvariable=self.sem_var, values=["1", "2", "3"],
+            width=6, state="readonly"
+        ).grid(row=0, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="ปีการศึกษา *", bg=BG, font=FONT_B).grid(row=1, column=0, sticky="w", pady=7)
+        self.year_var = tk.StringVar(value=str(year_default or "2569"))
+        ttk.Combobox(
+            form, textvariable=self.year_var,
+            values=["2567", "2568", "2569", "2570"],
+            width=10, state="normal"
+        ).grid(row=1, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="ตอนเรียน *", bg=BG, font=FONT_B).grid(row=2, column=0, sticky="w", pady=7)
+        self.section_var = tk.StringVar(value="N01")
+        ttk.Combobox(
+            form, textvariable=self.section_var,
+            values=self.SECTION_CHOICES,
+            width=8, state="readonly"
+        ).grid(row=2, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="สถานะ", bg=BG, font=FONT_B).grid(row=3, column=0, sticky="w", pady=7)
+        self.status_var = tk.StringVar(value="active")
+        ttk.Combobox(
+            form, textvariable=self.status_var,
+            values=self.STATUS_CHOICES,
+            width=10, state="readonly"
+        ).grid(row=3, column=1, sticky="w", padx=10)
+
+        tk.Label(
+            form,
+            text="โหมดปัจจุบันรองรับอย่างปลอดภัย 1 ตอนปกติ (N01) และ 1 ตอนพิเศษ (P01) ต่อภาคเรียน",
+            bg=BG, fg=GRAY, font=FONT_SM, wraplength=360, justify="left"
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        btn_frame = tk.Frame(self, bg=BG)
+        btn_frame.pack(pady=12)
+        tk.Button(btn_frame, text="บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=20, pady=6, command=self._confirm).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
+                  relief="flat", padx=16, pady=6, command=self.destroy).pack(side="left", padx=6)
+        self.wait_window()
+
+    def _confirm(self):
+        try:
+            semester = int(self.sem_var.get())
+            year = int(self.year_var.get())
+        except ValueError:
+            messagebox.showwarning("ข้อมูลไม่ถูกต้อง", "ภาคเรียนและปีการศึกษาต้องเป็นตัวเลข", parent=self)
+            return
+
+        section_code = self.section_var.get().strip().upper()
+        if section_code not in self.SECTION_CHOICES:
+            messagebox.showwarning("ข้อมูลไม่ถูกต้อง", "กรุณาเลือกตอนเรียนที่รองรับ", parent=self)
+            return
+
+        self.result = {
+            "semester": semester,
+            "year": year,
+            "section_code": section_code,
+            "is_special": section_code.startswith("P"),
+            "status": self.status_var.get().strip() or "active",
+        }
+        self.destroy()
+
+
+class TQF3GenerateDialog(tk.Toplevel):
+    def __init__(self, parent, course):
+        super().__init__(parent)
+        self.title("สร้าง มคอ.3")
+        self.geometry("420x250")
+        self.resizable(False, False)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.result = None
+
+        code = course["code"] if course else "?"
+        name = course["name_th"] if course else ""
+
+        tk.Label(self, text=f"{code}  {name}", bg=BG, fg=BLUE_DARK,
+                 font=FONT_B, wraplength=380).pack(padx=16, pady=(16, 6), anchor="w")
+        tk.Label(self, text="ระบุข้อมูลการเปิดสอนก่อนสร้างไฟล์ มคอ.3",
+                 bg=BG, fg=GRAY, font=FONT_SM).pack(padx=16, anchor="w")
+
+        form = tk.Frame(self, bg=BG)
+        form.pack(padx=16, pady=14, fill="x")
+
+        tk.Label(form, text="ภาคเรียนที่ *", bg=BG, font=FONT_B).grid(row=0, column=0, sticky="w", pady=7)
+        self.sem_var = tk.StringVar(value="1")
+        ttk.Combobox(
+            form, textvariable=self.sem_var, values=["1", "2", "3"],
+            width=6, state="readonly"
+        ).grid(row=0, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="ปีการศึกษา *", bg=BG, font=FONT_B).grid(row=1, column=0, sticky="w", pady=7)
+        self.year_var = tk.StringVar(value="2569")
+        tk.Entry(form, textvariable=self.year_var, width=12, font=("Arial", 11)).grid(
+            row=1, column=1, sticky="w", padx=10
+        )
+
+        tk.Label(form, text="ประเภทเปิด", bg=BG, font=FONT_B).grid(row=2, column=0, sticky="w", pady=7)
+        sec_frame = tk.Frame(form, bg=BG)
+        sec_frame.grid(row=2, column=1, sticky="w", padx=10)
+        self.special_var = tk.BooleanVar(value=False)
+        tk.Radiobutton(sec_frame, text="ปกติ (N0x)", variable=self.special_var,
+                       value=False, bg=BG, font=FONT_SM,
+                       activebackground=BG).pack(side="left", padx=(0, 10))
+        tk.Radiobutton(sec_frame, text="พิเศษ (P0x)", variable=self.special_var,
+                       value=True, bg=BG, font=FONT_SM,
+                       activebackground=BG).pack(side="left")
+
+        btn_frame = tk.Frame(self, bg=BG)
+        btn_frame.pack(pady=12)
+        tk.Button(btn_frame, text="สร้าง", bg=BLUE, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=20, pady=6, command=self._confirm).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
+                  relief="flat", padx=16, pady=6, command=self.destroy).pack(side="left", padx=6)
+        self.wait_window()
+
+    def _confirm(self):
+        try:
+            semester = int(self.sem_var.get())
+            year = int(self.year_var.get())
+        except ValueError:
+            messagebox.showwarning("ข้อมูลไม่ถูกต้อง", "ภาคเรียนและปีการศึกษาต้องเป็นตัวเลข", parent=self)
+            return
+        self.result = {
+            "semester": semester,
+            "year": year,
+            "is_special": bool(self.special_var.get()),
+        }
+        self.destroy()
+
+
 # ══════════════════════════════════════════════════════
 # DIALOG เพิ่ม/แก้ไขวิชาใหม่
 # ══════════════════════════════════════════════════════
 class CourseAddDialog(tk.Toplevel):
+    CREDIT_EXAMPLES = ["3(3-0-6)", "3(2-2-5)", "3(0-6-3)", "2(1-2-3)", "1(0-2-1)"]
+    PREREQUISITE_EXAMPLES = ["ไม่มี", "ตามแผนหลักสูตร", "SMA1001", "SMA1002 และ SMA1003"]
     """Dialog สำหรับเพิ่มวิชาใหม่ หรือแก้ไขข้อมูลพื้นฐานวิชา"""
     TYPES = ["วิชาแกน (Core)", "วิชาบังคับ (Required)",
              "วิชาเลือก (Elective)", "วิชาปฏิบัติการ (Practicum)",
@@ -1339,8 +2689,13 @@ class CourseAddDialog(tk.Toplevel):
         cr_frame = tk.Frame(frm, bg=BG)
         cr_frame.grid(row=4, column=1, sticky="w")
         self.credits_var = tk.StringVar(value=ex.get("credits_text", ""))
-        tk.Entry(cr_frame, textvariable=self.credits_var,
-                 width=12, font=("Arial", 10)).pack(side="left")
+        ttk.Combobox(
+            cr_frame,
+            textvariable=self.credits_var,
+            values=self.CREDIT_EXAMPLES,
+            width=12,
+            state="normal",
+        ).pack(side="left")
         tk.Label(cr_frame, text="  บรรยาย:", bg=BG, font=FONT_SM).pack(side="left")
         self.lec_var = tk.StringVar(value=str(ex.get("credit_lecture", 0)))
         tk.Entry(cr_frame, textvariable=self.lec_var, width=3,
@@ -1369,7 +2724,9 @@ class CourseAddDialog(tk.Toplevel):
         # วิชาบังคับก่อน
         row_label(6, "บังคับก่อน")
         self.prereq_var = tk.StringVar(value=ex.get("prerequisite", "ไม่มี"))
-        entry(6, self.prereq_var, 30)
+        ttk.Combobox(frm, textvariable=self.prereq_var,
+                     values=self.PREREQUISITE_EXAMPLES,
+                     width=30, state="normal").grid(row=6, column=1, sticky="w")
 
         # คำอธิบาย
         row_label(7, "คำอธิบาย")
@@ -1464,16 +2821,18 @@ class PLOManagerDialog(tk.Toplevel):
         # Treeview
         tree_frame = tk.Frame(self, bg=BG)
         tree_frame.pack(fill="both", expand=True, padx=12, pady=4)
-        tcols = ("num", "cat", "desc")
+        tcols = ("num", "code", "cat", "desc")
         self.plo_tree = ttk.Treeview(
             tree_frame, columns=tcols, show="headings",
             selectmode="browse", height=12)
         self.plo_tree.heading("num",  text="PLO#")
+        self.plo_tree.heading("code", text="Code")
         self.plo_tree.heading("cat",  text="ด้าน")
         self.plo_tree.heading("desc", text="คำอธิบาย")
         self.plo_tree.column("num",  width=50,  anchor="center", minwidth=40)
+        self.plo_tree.column("code", width=70,  anchor="center")
         self.plo_tree.column("cat",  width=180, anchor="w")
-        self.plo_tree.column("desc", width=400, anchor="w")
+        self.plo_tree.column("desc", width=330, anchor="w")
         self.plo_tree.bind("<<TreeviewSelect>>",
                            lambda e: self.btn_del_plo.config(
                                state="normal" if self.plo_tree.selection() else "disabled"))
@@ -1504,11 +2863,15 @@ class PLOManagerDialog(tk.Toplevel):
             self.plo_tree.delete(item)
         for r in self._rows:
             self.plo_tree.insert("", "end", values=(
-                r["plo_number"], r.get("category",""), r.get("description","")))
+                r["plo_number"],
+                r.get("plo_code", "") or str(r["plo_number"]),
+                r.get("category",""),
+                r.get("description",""),
+            ))
 
     def _add_row(self):
         next_num = max((r["plo_number"] for r in self._rows), default=0) + 1
-        dlg = PLOEditRowDialog(self, next_num, "", "", self.PLO_CATS)
+        dlg = PLOEditRowDialog(self, next_num, str(next_num), "", "", self.PLO_CATS)
         if dlg.result:
             self._rows.append(dlg.result)
             self._rows.sort(key=lambda x: x["plo_number"])
@@ -1523,6 +2886,7 @@ class PLOManagerDialog(tk.Toplevel):
         if idx is None: return
         r = self._rows[idx]
         dlg = PLOEditRowDialog(self, r["plo_number"],
+                               r.get("plo_code", "") or str(r["plo_number"]),
                                r.get("category",""), r.get("description",""),
                                self.PLO_CATS)
         if dlg.result:
@@ -1543,10 +2907,10 @@ class PLOManagerDialog(tk.Toplevel):
 
 
 class PLOEditRowDialog(tk.Toplevel):
-    def __init__(self, parent, plo_number, category, description, cats):
+    def __init__(self, parent, plo_number, plo_code, category, description, cats):
         super().__init__(parent)
         self.title(f"PLO {plo_number}")
-        self.geometry("460x240")
+        self.geometry("460x285")
         self.resizable(False, False)
         self.configure(bg=BG)
         self.grab_set()
@@ -1562,19 +2926,25 @@ class PLOEditRowDialog(tk.Toplevel):
         tk.Entry(frm, textvariable=self.num_var, width=6,
                  font=("Arial",10)).grid(row=0, column=1, sticky="w")
 
-        tk.Label(frm, text="ด้าน:", bg=BG, font=FONT_B).grid(
+        tk.Label(frm, text="Code:", bg=BG, font=FONT_B).grid(
             row=1, column=0, sticky="e", pady=6, padx=(0,10))
+        self.code_var = tk.StringVar(value=plo_code or str(plo_number))
+        tk.Entry(frm, textvariable=self.code_var, width=12,
+                 font=("Arial",10)).grid(row=1, column=1, sticky="w")
+
+        tk.Label(frm, text="ด้าน:", bg=BG, font=FONT_B).grid(
+            row=2, column=0, sticky="e", pady=6, padx=(0,10))
         self.cat_var = tk.StringVar(value=category)
         ttk.Combobox(frm, textvariable=self.cat_var,
                      values=cats, width=32, state="normal").grid(
-            row=1, column=1, sticky="w")
+            row=2, column=1, sticky="w")
 
         tk.Label(frm, text="คำอธิบาย:", bg=BG, font=FONT_B).grid(
-            row=2, column=0, sticky="ne", pady=6, padx=(0,10))
+            row=3, column=0, sticky="ne", pady=6, padx=(0,10))
         self.desc_text = tk.Text(frm, width=34, height=3,
                                   font=("Arial",9), wrap="word")
         self.desc_text.insert("1.0", description)
-        self.desc_text.grid(row=2, column=1, sticky="w")
+        self.desc_text.grid(row=3, column=1, sticky="w")
 
         btn_f = tk.Frame(self, bg=BG)
         btn_f.pack(pady=12)
@@ -1594,6 +2964,7 @@ class PLOEditRowDialog(tk.Toplevel):
             return
         self.result = {
             "plo_number": num,
+            "plo_code": self.code_var.get().strip() or str(num),
             "category": self.cat_var.get().strip(),
             "description": self.desc_text.get("1.0","end").strip(),
         }
@@ -1612,6 +2983,7 @@ class CourseCLOEditor(tk.Toplevel):
 
     def __init__(self, parent, course, clos, assessments, plos):
         super().__init__(parent)
+        course = dict(course) if course else {}
         code = course["code"] if course else "?"
         self.title(f"แก้ไข CLO & การประเมิน — {code}")
         self.geometry("780x600")
@@ -1832,11 +3204,33 @@ class CourseCLOEditor(tk.Toplevel):
 
 
 class CLOEditRowDialog(tk.Toplevel):
+    TEACHING_STRATEGY_EXAMPLES = [
+        "บรรยาย",
+        "บรรยายและอภิปราย",
+        "อภิปรายกลุ่ม",
+        "problem-based learning",
+        "project-based learning",
+        "ปฏิบัติการ",
+        "กรณีศึกษา",
+        "flipped classroom",
+    ]
+    ASSESSMENT_METHOD_EXAMPLES = [
+        "แบบฝึกหัด",
+        "งานเดี่ยว",
+        "งานกลุ่ม",
+        "สอบย่อย",
+        "สอบกลางภาค",
+        "สอบปลายภาค",
+        "นำเสนอ",
+        "โครงงาน",
+        "รายงาน",
+    ]
     def __init__(self, parent, clo, plos, domains):
         super().__init__(parent)
         self.title(f"CLO {clo.get('clo_number','')}")
-        self.geometry("500x380")
-        self.resizable(False, True)
+        self.geometry("640x450")
+        self.minsize(580, 420)
+        self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -1845,6 +3239,7 @@ class CLOEditRowDialog(tk.Toplevel):
         frm = tk.Frame(self, bg=BG)
         frm.pack(fill="both", expand=True, padx=16, pady=12)
         frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(6, weight=1)
 
         def lbl(r, t):
             tk.Label(frm, text=t, bg=BG, font=FONT_B, anchor="e").grid(
@@ -1856,25 +3251,27 @@ class CLOEditRowDialog(tk.Toplevel):
                  font=("Arial",10)).grid(row=0, column=1, sticky="w")
 
         lbl(1, "คำอธิบาย:")
-        self.desc = tk.Text(frm, width=38, height=3, font=("Arial",9), wrap="word")
+        self.desc = tk.Text(frm, width=48, height=4, font=("Arial",9), wrap="word")
         self.desc.insert("1.0", clo.get("description",""))
-        self.desc.grid(row=1, column=1, sticky="w", pady=4)
+        self.desc.grid(row=1, column=1, sticky="ew", pady=4)
 
         lbl(2, "ด้าน:")
         self.dom_var = tk.StringVar(value=clo.get("domain",""))
         ttk.Combobox(frm, textvariable=self.dom_var,
-                     values=domains, width=32, state="normal").grid(
-            row=2, column=1, sticky="w")
+                     values=domains, width=42, state="normal").grid(
+            row=2, column=1, sticky="ew")
 
         lbl(3, "วิธีสอน:")
         self.strat_var = tk.StringVar(value=clo.get("teaching_strategy",""))
-        tk.Entry(frm, textvariable=self.strat_var, width=38,
-                 font=("Arial",9)).grid(row=3, column=1, sticky="w")
+        ttk.Combobox(frm, textvariable=self.strat_var,
+                     values=self.TEACHING_STRATEGY_EXAMPLES,
+                     width=46, state="normal").grid(row=3, column=1, sticky="ew")
 
         lbl(4, "วิธีวัด:")
         self.asmth_var = tk.StringVar(value=clo.get("assessment_method",""))
-        tk.Entry(frm, textvariable=self.asmth_var, width=38,
-                 font=("Arial",9)).grid(row=4, column=1, sticky="w")
+        ttk.Combobox(frm, textvariable=self.asmth_var,
+                     values=self.ASSESSMENT_METHOD_EXAMPLES,
+                     width=46, state="normal").grid(row=4, column=1, sticky="ew")
 
         lbl(5, "เกณฑ์ผ่าน %:")
         self.pass_var = tk.StringVar(value=str(clo.get("pass_threshold_pct",50)))
@@ -1882,22 +3279,29 @@ class CLOEditRowDialog(tk.Toplevel):
                  font=("Arial",10)).grid(row=5, column=1, sticky="w")
 
         lbl(6, "PLO ที่ตอบสนอง:")
-        plo_frame = tk.Frame(frm, bg=BG)
-        plo_frame.grid(row=6, column=1, sticky="w", pady=4)
+        plo_frame = tk.LabelFrame(
+            frm,
+            text="เลือก PLO ที่สอดคล้อง",
+            bg=BG,
+            fg=BLUE_DARK,
+            font=FONT_SM,
+            padx=8,
+            pady=6,
+        )
+        plo_frame.grid(row=6, column=1, sticky="nsew", pady=4)
         cur_mapping = clo.get("plo_mapping", [])
         if isinstance(cur_mapping, str):
             cur_mapping = json.loads(cur_mapping)
-        self._plo_vars = {}
-        for p in plos:
-            var = tk.BooleanVar(value=(p["plo_number"] in cur_mapping))
-            self._plo_vars[p["plo_number"]] = var
-            tk.Checkbutton(
-                plo_frame, text=f"PLO{p['plo_number']}",
-                variable=var, bg=BG, font=FONT_SM, cursor="hand2",
-                activebackground=BG).pack(side="left", padx=4)
-        if not plos:
-            tk.Label(plo_frame, text="(ยังไม่มี PLO — กด 📚 PLO ก่อน)",
-                     bg=BG, fg=GRAY, font=FONT_SM).pack(side="left")
+        self._plo_vars = _build_wrapped_checklist(
+            plo_frame,
+            items=plos,
+            selected_values=cur_mapping,
+            text_fn=lambda p: f"PLO {p.get('plo_code') or p['plo_number']}",
+            value_fn=lambda p: p["plo_number"],
+            empty_text="(ยังไม่มี PLO — กด 📚 PLO ก่อน)",
+            columns=4,
+            height=110,
+        )
 
         btn_f = tk.Frame(self, bg=BG)
         btn_f.pack(pady=10)
@@ -1929,18 +3333,40 @@ class CLOEditRowDialog(tk.Toplevel):
 
 
 class AsmtEditRowDialog(tk.Toplevel):
+    NAME_EXAMPLES = [
+        "Quiz",
+        "Assignment",
+        "Report",
+        "Presentation",
+        "Midterm exam",
+        "Final exam",
+        "Project",
+        "Lab",
+    ]
+    PERIOD_EXAMPLES = [
+        "Week 1-4",
+        "Before midterm",
+        "Week 8",
+        "Midterm",
+        "After midterm",
+        "Final",
+        "Whole semester",
+    ]
     def __init__(self, parent, asmt, clos):
         super().__init__(parent)
         self.title("รายการประเมิน")
-        self.geometry("440x320")
-        self.resizable(False, False)
+        self.geometry("560x420")
+        self.minsize(520, 380)
+        self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
+        self._asmt = dict(asmt)
 
         frm = tk.Frame(self, bg=BG)
         frm.pack(fill="both", expand=True, padx=16, pady=12)
         frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(5, weight=1)
 
         def lbl(r, t):
             tk.Label(frm, text=t, bg=BG, font=FONT_B, anchor="e").grid(
@@ -1948,8 +3374,9 @@ class AsmtEditRowDialog(tk.Toplevel):
 
         lbl(0, "ชื่อรายการ:")
         self.name_var = tk.StringVar(value=asmt.get("name",""))
-        tk.Entry(frm, textvariable=self.name_var, width=30,
-                 font=("Arial",10)).grid(row=0, column=1, sticky="w")
+        ttk.Combobox(frm, textvariable=self.name_var,
+                     values=self.NAME_EXAMPLES,
+                     width=30, state="normal").grid(row=0, column=1, sticky="w")
 
         lbl(1, "คะแนนเต็ม:")
         self.full_var = tk.StringVar(value=str(asmt.get("full_score",100)))
@@ -1967,22 +3394,38 @@ class AsmtEditRowDialog(tk.Toplevel):
                  font=("Arial",10)).grid(row=3, column=1, sticky="w")
 
         lbl(4, "CLOs ที่วัด:")
-        clo_frame = tk.Frame(frm, bg=BG)
-        clo_frame.grid(row=4, column=1, sticky="w", pady=4)
+        tk.Label(frm, text="Assessment period:", bg=BG, font=FONT_B, anchor="e").grid(
+            row=4, column=0, sticky="e", pady=5, padx=(0,8))
+        self.period_var = tk.StringVar(value=asmt.get("assessment_period", ""))
+        ttk.Combobox(frm, textvariable=self.period_var,
+                     values=self.PERIOD_EXAMPLES,
+                     width=30, state="normal").grid(row=4, column=1, sticky="w")
+
+        tk.Label(frm, text="CLOs:", bg=BG, font=FONT_B, anchor="e").grid(
+            row=5, column=0, sticky="e", pady=5, padx=(0,8))
+        clo_frame = tk.LabelFrame(
+            frm,
+            text="เลือก CLO ที่ถูกวัด",
+            bg=BG,
+            fg=BLUE_DARK,
+            font=FONT_SM,
+            padx=8,
+            pady=6,
+        )
+        clo_frame.grid(row=5, column=1, sticky="nsew", pady=4)
         cur_mapping = asmt.get("clo_mapping", [])
         if isinstance(cur_mapping, str):
             cur_mapping = json.loads(cur_mapping)
-        self._clo_vars = {}
-        for c in clos:
-            num = c["clo_number"]
-            var = tk.BooleanVar(value=(num in cur_mapping))
-            self._clo_vars[num] = var
-            tk.Checkbutton(clo_frame, text=f"CLO{num}",
-                           variable=var, bg=BG, font=FONT_SM,
-                           activebackground=BG).pack(side="left", padx=3)
-        if not clos:
-            tk.Label(clo_frame, text="(ยังไม่มี CLO)",
-                     bg=BG, fg=GRAY, font=FONT_SM).pack(side="left")
+        self._clo_vars = _build_wrapped_checklist(
+            clo_frame,
+            items=clos,
+            selected_values=cur_mapping,
+            text_fn=lambda c: f"CLO {c['clo_number']}",
+            value_fn=lambda c: c["clo_number"],
+            empty_text="(ยังไม่มี CLO)",
+            columns=5,
+            height=90,
+        )
 
         btn_f = tk.Frame(self, bg=BG)
         btn_f.pack(pady=12)
@@ -2006,12 +3449,17 @@ class AsmtEditRowDialog(tk.Toplevel):
         except ValueError:
             messagebox.showwarning("ข้อมูลผิด","ตัวเลขไม่ถูกต้อง",parent=self)
             return
-        self.result = {
-            "name": name, "full_score": full,
-            "weight_pct": wt, "pass_threshold": pt,
+        self.result = dict(self._asmt)
+        self.result.update({
+            "name": name,
+            "full_score": full,
+            "weight_pct": wt,
+            "pass_threshold": pt,
+            "assessment_period": self.period_var.get().strip() if getattr(self, "period_var", None) else self._asmt.get("assessment_period", ""),
             "clo_mapping": [n for n, v in self._clo_vars.items() if v.get()],
-            "eval_criteria": "",
-        }
+        })
+        self.result.setdefault("assessment_period", "")
+        self.result.setdefault("eval_criteria", "")
         self.destroy()
 
 
@@ -2141,16 +3589,15 @@ class CourseEditDialog(tk.Toplevel):
             self.year_var    = None
             self.special_var = None
 
-        # ── Buttons ─────────────────────────────────
-        btn_frame = tk.Frame(self, bg=BG)
-        btn_frame.pack(pady=16)
-        tk.Button(btn_frame, text="💾  บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
-                  relief="flat", padx=22, pady=7,
-                  cursor="hand2", activebackground=BLUE_DARK, activeforeground=WHITE,
-                  command=self._save).pack(side="left", padx=8)
-        tk.Button(btn_frame, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
-                  relief="flat", padx=16, pady=7,
-                  command=self.destroy).pack(side="left", padx=4)
+        # ── bottom buttons ──
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=16)
+        tk.Button(btn_row, text="บันทึก", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self._save).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self.destroy).pack(side="right")
 
         self.wait_window()
 
@@ -2178,6 +3625,679 @@ class CourseEditDialog(tk.Toplevel):
             self.result["semester"]   = sem
             self.result["year"]       = year
             self.result["is_special"] = bool(self.special_var.get()) if self.special_var else False
+        self.destroy()
+
+
+# ══════════════════════════════════════════════════════
+class CourseTeachingPlanDialog(tk.Toplevel):
+    """Edit course_teaching_plan rows for a course."""
+
+    def __init__(self, parent, course, plan_rows: list):
+        super().__init__(parent)
+        self.title(f"แผนการสอน — {course['code']} {course['name_th'] or ''}")
+        self.resizable(True, True)
+        self.geometry("860x560")
+        self.grab_set()
+        self.result = None
+        self._rows = [dict(r) for r in plan_rows]
+
+        tb = tk.Frame(self, bg=BG, pady=6)
+        tb.pack(fill="x", padx=10)
+        tk.Button(tb, text="+ เพิ่มแถว", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._add_row).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="แก้ไข", bg=BLUE, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._edit_row).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="ลบ", bg=RED, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._del_row).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="โ‘", font=FONT_B, relief="flat", padx=8, pady=3,
+                  command=self._move_up).pack(side="left", padx=(0, 2))
+        tk.Button(tb, text="โ“", font=FONT_B, relief="flat", padx=8, pady=3,
+                  command=self._move_down).pack(side="left")
+
+        cols = ("no", "week", "llo", "topic", "hours")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings",
+                                 selectmode="browse", height=15)
+        self.tree.heading("no", text="#")
+        self.tree.heading("week", text="สัปดาห์")
+        self.tree.heading("llo", text="LLO")
+        self.tree.heading("topic", text="หัวข้อ")
+        self.tree.heading("hours", text="ชม.")
+        self.tree.column("no", width=36, anchor="center", stretch=False)
+        self.tree.column("week", width=90, anchor="center", stretch=False)
+        self.tree.column("llo", width=220, anchor="w")
+        self.tree.column("topic", width=360, anchor="w")
+        self.tree.column("hours", width=60, anchor="center", stretch=False)
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 4))
+        vsb.pack(side="left", fill="y", pady=(0, 4))
+        self.tree.bind("<Double-1>", lambda e: self._edit_row())
+
+        hint = tk.Label(
+            self,
+            text="แก้ได้ทั้ง week_label, LLO, หัวข้อ, กิจกรรม, วิธีสอน, สื่อ, วิธีประเมิน และจำนวนชั่วโมง",
+            bg=BG,
+            fg=GRAY,
+            font=FONT_SM,
+            anchor="w",
+        )
+        hint.pack(fill="x", padx=12, pady=(0, 4))
+
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=10)
+        tk.Button(btn_row, text="บันทึก", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self._save).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self.destroy).pack(side="right")
+
+        self._refresh_tree()
+        self.wait_window()
+
+    def _refresh_tree(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for i, row in enumerate(self._rows, 1):
+            label = row.get("week_label") or row.get("week") or "-"
+            llo = (row.get("llo_text") or "").replace("\n", " ").strip()
+            topic = (row.get("topic") or "").replace("\n", " ").strip()
+            hours = row.get("hours_planned", 0) or 0
+            self.tree.insert("", "end", iid=str(i - 1), values=(
+                i,
+                label,
+                llo[:48] if llo else "-",
+                topic[:72] if topic else "-",
+                f"{float(hours):.0f}",
+            ))
+
+    def _selected_idx(self):
+        sel = self.tree.selection()
+        return int(sel[0]) if sel else None
+
+    def _add_row(self):
+        dlg = _TeachingPlanRowDialog(self)
+        if dlg.result:
+            self._rows.append(dlg.result)
+            self._refresh_tree()
+
+    def _edit_row(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        dlg = _TeachingPlanRowDialog(self, self._rows[idx])
+        if dlg.result:
+            self._rows[idx] = dlg.result
+            self._refresh_tree()
+            self.tree.selection_set(str(idx))
+
+    def _del_row(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        self._rows.pop(idx)
+        self._refresh_tree()
+
+    def _move_up(self):
+        idx = self._selected_idx()
+        if idx is None or idx == 0:
+            return
+        self._rows[idx - 1], self._rows[idx] = self._rows[idx], self._rows[idx - 1]
+        self._refresh_tree()
+        self.tree.selection_set(str(idx - 1))
+
+    def _move_down(self):
+        idx = self._selected_idx()
+        if idx is None or idx >= len(self._rows) - 1:
+            return
+        self._rows[idx], self._rows[idx + 1] = self._rows[idx + 1], self._rows[idx]
+        self._refresh_tree()
+        self.tree.selection_set(str(idx + 1))
+
+    def _save(self):
+        normalized = []
+        for idx, row in enumerate(self._rows):
+            item = dict(row)
+            item["seq"] = idx
+            planned = item.get("hours_planned", 0) or 0
+            if not planned:
+                planned = (item.get("hours_theory", 0) or 0) + (item.get("hours_practice", 0) or 0)
+            item["hours_planned"] = planned
+            normalized.append(item)
+        self.result = normalized
+        self.destroy()
+
+
+class _TeachingPlanRowDialog(tk.Toplevel):
+    WEEK_LABEL_EXAMPLES = [
+        "1", "2", "3", "4", "5", "6", "7", "8",
+        "9", "10", "11", "12", "13", "14", "15",
+        "16", "1-2", "3-4", "Midterm", "Final", "Review",
+    ]
+    """Sub-dialog: add or edit a single teaching plan row."""
+
+    def __init__(self, parent, row: dict = None):
+        super().__init__(parent)
+        self.title("แก้ไขแผนการสอน" if row else "เพิ่มแผนการสอน")
+        self.resizable(True, True)
+        self.geometry("760x620")
+        self.minsize(680, 560)
+        self.grab_set()
+        self.result = None
+        row = row or {}
+
+        self.week_var = tk.StringVar(value=str(row.get("week", "") or ""))
+        self.week_label_var = tk.StringVar(value=row.get("week_label", "") or "")
+        self.hours_planned_var = tk.StringVar(value=str(row.get("hours_planned", "") or ""))
+        self.hours_theory_var = tk.StringVar(value=str(row.get("hours_theory", "") or ""))
+        self.hours_practice_var = tk.StringVar(value=str(row.get("hours_practice", "") or ""))
+        self.hours_self_var = tk.StringVar(value=str(row.get("hours_self", "") or ""))
+
+        frm = tk.Frame(self, bg=BG, padx=16, pady=12)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="สัปดาห์:", bg=BG, fg=FG, font=FONT_B).grid(row=0, column=0, sticky="w", pady=4)
+        tk.Entry(frm, textvariable=self.week_var, width=8, font=FONT).grid(row=0, column=1, sticky="w", pady=4)
+        tk.Label(frm, text="ป้ายแสดงผล:", bg=BG, fg=FG, font=FONT_B).grid(row=0, column=2, sticky="w", padx=(12, 0), pady=4)
+        ttk.Combobox(frm, textvariable=self.week_label_var,
+                     values=self.WEEK_LABEL_EXAMPLES,
+                     width=14, state="normal").grid(row=0, column=3, sticky="w", pady=4)
+
+        tk.Label(frm, text="ชั่วโมงรวม:", bg=BG, fg=FG, font=FONT_B).grid(row=1, column=0, sticky="w", pady=4)
+        tk.Entry(frm, textvariable=self.hours_planned_var, width=8, font=FONT).grid(row=1, column=1, sticky="w", pady=4)
+        tk.Label(frm, text="ทฤษฎี:", bg=BG, fg=FG, font=FONT_B).grid(row=1, column=2, sticky="w", padx=(12, 0), pady=4)
+        tk.Entry(frm, textvariable=self.hours_theory_var, width=8, font=FONT).grid(row=1, column=3, sticky="w", pady=4)
+        tk.Label(frm, text="ปฏิบัติ:", bg=BG, fg=FG, font=FONT_B).grid(row=1, column=4, sticky="w", padx=(12, 0), pady=4)
+        tk.Entry(frm, textvariable=self.hours_practice_var, width=8, font=FONT).grid(row=1, column=5, sticky="w", pady=4)
+        tk.Label(frm, text="ศึกษาด้วยตนเอง:", bg=BG, fg=FG, font=FONT_B).grid(row=1, column=6, sticky="w", padx=(12, 0), pady=4)
+        tk.Entry(frm, textvariable=self.hours_self_var, width=8, font=FONT).grid(row=1, column=7, sticky="w", pady=4)
+
+        def add_text_field(row_no, label, value):
+            tk.Label(frm, text=label, bg=BG, fg=FG, font=FONT_B,
+                     anchor="w").grid(row=row_no, column=0, sticky="nw", pady=4)
+            widget = tk.Text(frm, width=74, height=3, font=FONT, wrap="word")
+            widget.grid(row=row_no, column=1, columnspan=7, sticky="nsew", pady=4)
+            if value:
+                widget.insert("1.0", value)
+            return widget
+
+        self.llo_text = add_text_field(2, "LLO:", row.get("llo_text", "") or "")
+        self.topic_text = add_text_field(3, "หัวข้อ:", row.get("topic", "") or "")
+        self.activities_text = add_text_field(4, "กิจกรรม:", row.get("activities", "") or "")
+        self.method_text = add_text_field(5, "วิธีสอน:", row.get("teaching_method", "") or "")
+        self.media_text = add_text_field(6, "สื่อ/เครื่องมือ:", row.get("media", "") or "")
+        self.assessment_text = add_text_field(7, "การประเมิน/หลักฐาน:", row.get("assessment_tools", "") or "")
+
+        for idx in range(1, 8):
+            frm.grid_columnconfigure(idx, weight=1)
+        for row_no in range(2, 8):
+            frm.grid_rowconfigure(row_no, weight=1)
+
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=16)
+        tk.Button(btn_row, text="ตกลง", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=4,
+                  command=self._ok).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=4,
+                  command=self.destroy).pack(side="right")
+        self.wait_window()
+
+    @staticmethod
+    def _read_text(widget):
+        return widget.get("1.0", "end").strip()
+
+    @staticmethod
+    def _to_float(raw):
+        text = str(raw).strip()
+        if not text:
+            return 0.0
+        return float(text)
+
+    def _ok(self):
+        try:
+            week_text = self.week_var.get().strip()
+            week = int(week_text) if week_text else 0
+            hours_planned = self._to_float(self.hours_planned_var.get())
+            hours_theory = self._to_float(self.hours_theory_var.get())
+            hours_practice = self._to_float(self.hours_practice_var.get())
+            hours_self = self._to_float(self.hours_self_var.get())
+        except ValueError:
+            messagebox.showwarning(
+                "ข้อมูลไม่ถูกต้อง",
+                "สัปดาห์และชั่วโมงต้องเป็นตัวเลข",
+                parent=self,
+            )
+            return
+
+        topic = self._read_text(self.topic_text)
+        if not topic:
+            messagebox.showwarning(
+                "ข้อมูลไม่ครบ",
+                "กรุณากรอกหัวข้อการสอน",
+                parent=self,
+            )
+            return
+
+        week_label = self.week_label_var.get().strip() or (str(week) if week else "")
+        if not hours_planned:
+            hours_planned = hours_theory + hours_practice
+
+        self.result = {
+            "week": week,
+            "week_label": week_label,
+            "llo_text": self._read_text(self.llo_text),
+            "topic": topic,
+            "activities": self._read_text(self.activities_text),
+            "teaching_method": self._read_text(self.method_text),
+            "media": self._read_text(self.media_text),
+            "assessment_tools": self._read_text(self.assessment_text),
+            "hours_planned": hours_planned,
+            "hours_theory": hours_theory,
+            "hours_practice": hours_practice,
+            "hours_self": hours_self,
+        }
+        self.destroy()
+
+
+class CourseResourcesDialog(tk.Toplevel):
+    """Edit course_resources (section 8: textbooks, articles, websites, media)."""
+
+    TYPES = ["textbook", "article", "website", "media", "other"]
+
+    def __init__(self, parent, course, resources: list):
+        super().__init__(parent)
+        self.title(f"ทรัพยากรการสอน — {course['code']} {course['name_th'] or ''}")
+        self.resizable(True, True)
+        self.geometry("720x520")
+        self.grab_set()
+        self.result = None
+        self._rows = [dict(r) for r in resources]
+
+        tb = tk.Frame(self, bg=BG, pady=6)
+        tb.pack(fill="x", padx=10)
+        tk.Button(tb, text="+ เพิ่มรายการ", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._add_row).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="แก้ไข", bg=BLUE, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._edit_row).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="ลบ", bg=RED, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._del_row).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="↑", font=FONT_B, relief="flat", padx=8, pady=3,
+                  command=self._move_up).pack(side="left", padx=(0, 2))
+        tk.Button(tb, text="↓", font=FONT_B, relief="flat", padx=8, pady=3,
+                  command=self._move_down).pack(side="left")
+
+        cols = ("no", "type", "citation", "url")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings",
+                                 selectmode="browse", height=14)
+        self.tree.heading("no",       text="#")
+        self.tree.heading("type",     text="ประเภท")
+        self.tree.heading("citation", text="รายการอ้างอิง / ชื่อ")
+        self.tree.heading("url",      text="URL")
+        self.tree.column("no",       width=30,  anchor="center", stretch=False)
+        self.tree.column("type",     width=80,  anchor="center", stretch=False)
+        self.tree.column("citation", width=360, anchor="w")
+        self.tree.column("url",      width=200, anchor="w")
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 4))
+        vsb.pack(side="left", fill="y", pady=(0, 4))
+        self.tree.bind("<Double-1>", lambda e: self._edit_row())
+
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=10)
+        tk.Button(btn_row, text="บันทึก", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self._save).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self.destroy).pack(side="right")
+
+        self._refresh_tree()
+        self.wait_window()
+
+    def _refresh_tree(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for i, r in enumerate(self._rows, 1):
+            self.tree.insert("", "end", iid=str(i - 1), values=(
+                i,
+                r.get("resource_type", "other"),
+                r.get("citation_text", "")[:80],
+                r.get("url", "") or "",
+            ))
+
+    def _selected_idx(self):
+        sel = self.tree.selection()
+        return int(sel[0]) if sel else None
+
+    def _add_row(self):
+        dlg = _ResourceRowDialog(self)
+        if dlg.result:
+            self._rows.append(dlg.result)
+            self._refresh_tree()
+
+    def _edit_row(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        dlg = _ResourceRowDialog(self, self._rows[idx])
+        if dlg.result:
+            self._rows[idx] = dlg.result
+            self._refresh_tree()
+            self.tree.selection_set(str(idx))
+
+    def _del_row(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        self._rows.pop(idx)
+        self._refresh_tree()
+
+    def _move_up(self):
+        idx = self._selected_idx()
+        if idx is None or idx == 0:
+            return
+        self._rows[idx - 1], self._rows[idx] = self._rows[idx], self._rows[idx - 1]
+        self._refresh_tree()
+        self.tree.selection_set(str(idx - 1))
+
+    def _move_down(self):
+        idx = self._selected_idx()
+        if idx is None or idx >= len(self._rows) - 1:
+            return
+        self._rows[idx], self._rows[idx + 1] = self._rows[idx + 1], self._rows[idx]
+        self._refresh_tree()
+        self.tree.selection_set(str(idx + 1))
+
+    def _save(self):
+        self.result = self._rows
+        self.destroy()
+
+
+class _ResourceRowDialog(tk.Toplevel):
+    """Sub-dialog: add or edit a single resource row."""
+    TYPES = ["textbook", "article", "website", "media", "other"]
+
+    def __init__(self, parent, row: dict = None):
+        super().__init__(parent)
+        self.title("แก้ไขทรัพยากร" if row else "เพิ่มทรัพยากร")
+        self.resizable(False, False)
+        self.geometry("560x240")
+        self.grab_set()
+        self.result = None
+        row = row or {}
+
+        frm = tk.Frame(self, bg=BG, padx=16, pady=12)
+        frm.pack(fill="both", expand=True)
+
+        def lbl(text, r):
+            tk.Label(frm, text=text, bg=BG, fg=FG, font=FONT_B,
+                     anchor="w").grid(row=r, column=0, sticky="w", pady=3)
+
+        lbl("ประเภท:", 0)
+        self.type_var = tk.StringVar(value=row.get("resource_type", "textbook"))
+        ttk.Combobox(frm, textvariable=self.type_var,
+                     values=self.TYPES, state="readonly", width=16
+                     ).grid(row=0, column=1, sticky="w", pady=3)
+
+        lbl("รายการอ้างอิง / ชื่อ:", 1)
+        self.cite_var = tk.StringVar(value=row.get("citation_text", ""))
+        tk.Entry(frm, textvariable=self.cite_var, width=52,
+                 font=FONT).grid(row=1, column=1, sticky="ew", pady=3)
+
+        lbl("URL:", 2)
+        self.url_var = tk.StringVar(value=row.get("url", "") or "")
+        tk.Entry(frm, textvariable=self.url_var, width=52,
+                 font=FONT).grid(row=2, column=1, sticky="ew", pady=3)
+
+        lbl("หมายเหตุ:", 3)
+        self.note_var = tk.StringVar(value=row.get("note", "") or "")
+        tk.Entry(frm, textvariable=self.note_var, width=52,
+                 font=FONT).grid(row=3, column=1, sticky="ew", pady=3)
+
+        frm.columnconfigure(1, weight=1)
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=16)
+        tk.Button(btn_row, text="ตกลง", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=4,
+                  command=self._ok).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=4,
+                  command=self.destroy).pack(side="right")
+        self.wait_window()
+
+    def _ok(self):
+        cite = self.cite_var.get().strip()
+        if not cite:
+            messagebox.showwarning("ข้อมูลไม่ครบ",
+                "กรุณากรอกรายการอ้างอิงหรือชื่อทรัพยากร", parent=self); return
+        self.result = {
+            "resource_type": self.type_var.get(),
+            "citation_text": cite,
+            "url":  self.url_var.get().strip() or None,
+            "note": self.note_var.get().strip() or None,
+        }
+        self.destroy()
+
+
+# ══════════════════════════════════════════════════════
+class TQF3StaffDialog(tk.Toplevel):
+    """Edit tqf3_staff (section 9: committee + instructors) for a TQF3 record."""
+    ROLE_LABELS = {"committee": "คณะกรรมการบริหารรายวิชา", "instructor": "ผู้สอนรายวิชา"}
+
+    def __init__(self, parent, course, tqf3_records: list):
+        super().__init__(parent)
+        self.title(f"บุคลากร มคอ.3 — {course['code']} {course['name_th'] or ''}")
+        self.resizable(True, True)
+        self.geometry("680x540")
+        self.grab_set()
+        self.result = None
+        self._tqf3_records = tqf3_records
+        self._staff = []
+        self._current_tqf3_id = None
+
+        hdr = tk.Frame(self, bg=BG, padx=10, pady=8)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="เลือก มคอ.3:", bg=BG, fg=FG,
+                 font=FONT_B).pack(side="left", padx=(0, 8))
+        self.rec_var = tk.StringVar()
+        rec_labels = [
+            f"ภาค {r['semester']} / {r['year']}" + (" (พิเศษ)" if r.get("is_special") else "")
+            for r in tqf3_records
+        ]
+        self.rec_combo = ttk.Combobox(hdr, textvariable=self.rec_var,
+                                      values=rec_labels, state="readonly", width=28)
+        self.rec_combo.pack(side="left")
+        self.rec_combo.bind("<<ComboboxSelected>>", self._on_rec_select)
+        if rec_labels:
+            self.rec_combo.current(0)
+            self.after(100, self._on_rec_select)
+
+        tb = tk.Frame(self, bg=BG, pady=4, padx=10)
+        tb.pack(fill="x")
+        tk.Button(tb, text="+ เพิ่มบุคลากร", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._add_person).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="แก้ไข", bg=BLUE, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._edit_person).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="ลบ", bg=RED, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=10, pady=3,
+                  command=self._del_person).pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="↑", font=FONT_B, relief="flat", padx=8, pady=3,
+                  command=self._move_up).pack(side="left", padx=(0, 2))
+        tk.Button(tb, text="↓", font=FONT_B, relief="flat", padx=8, pady=3,
+                  command=self._move_down).pack(side="left")
+
+        cols = ("seq", "role", "name")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings",
+                                 selectmode="browse", height=14)
+        self.tree.heading("seq",  text="#")
+        self.tree.heading("role", text="บทบาท")
+        self.tree.heading("name", text="ชื่อ-สกุล")
+        self.tree.column("seq",  width=35,  anchor="center", stretch=False)
+        self.tree.column("role", width=130, anchor="center", stretch=False)
+        self.tree.column("name", width=420, anchor="w")
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 4))
+        vsb.pack(side="left", fill="y", pady=(0, 4))
+        self.tree.bind("<Double-1>", lambda e: self._edit_person())
+
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=10)
+        tk.Button(btn_row, text="บันทึก", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self._save).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=5,
+                  command=self.destroy).pack(side="right")
+        self.wait_window()
+
+    def _on_rec_select(self, event=None):
+        idx = self.rec_combo.current()
+        if idx < 0:
+            return
+        rec = self._tqf3_records[idx]
+        self._current_tqf3_id = rec["id"]
+        try:
+            import database as db; db.init_db()
+            staff = db.get_tqf3_staff(rec["id"])
+            self._staff = [dict(s) for s in staff]
+        except Exception:
+            self._staff = []
+        if not self._staff:
+            try:
+                import database as db, sqlite3 as _sq, json as _json
+                conn = _sq.connect(db.DB_PATH)
+                conn.row_factory = _sq.Row
+                row = conn.execute(
+                    "SELECT instructor_main, instructors_json FROM tqf3 WHERE id=?",
+                    (rec["id"],)).fetchone()
+                conn.close()
+                if row and row["instructor_main"]:
+                    self._staff.append({"role": "committee", "seq": 0, "name": row["instructor_main"]})
+                for i, n in enumerate(_json.loads(row["instructors_json"] or "[]"), 1):
+                    if n and not any(n.startswith(kw) for kw in ("ภาคผนวก", "แบบประเมิน", "เกณฑ์")):
+                        self._staff.append({"role": "instructor", "seq": i, "name": n})
+            except Exception:
+                pass
+        self._refresh_tree()
+
+    def _refresh_tree(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for i, s in enumerate(self._staff):
+            role_label = self.ROLE_LABELS.get(s.get("role", "instructor"), s.get("role", ""))
+            self.tree.insert("", "end", iid=str(i), values=(i + 1, role_label, s.get("name", "")))
+
+    def _selected_idx(self):
+        sel = self.tree.selection()
+        return int(sel[0]) if sel else None
+
+    def _add_person(self):
+        dlg = _PersonRowDialog(self)
+        if dlg.result:
+            self._staff.append(dlg.result)
+            self._refresh_tree()
+
+    def _edit_person(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        dlg = _PersonRowDialog(self, self._staff[idx])
+        if dlg.result:
+            self._staff[idx] = dlg.result
+            self._refresh_tree()
+            self.tree.selection_set(str(idx))
+
+    def _del_person(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        self._staff.pop(idx)
+        self._refresh_tree()
+
+    def _move_up(self):
+        idx = self._selected_idx()
+        if idx is None or idx == 0:
+            return
+        self._staff[idx - 1], self._staff[idx] = self._staff[idx], self._staff[idx - 1]
+        self._refresh_tree()
+        self.tree.selection_set(str(idx - 1))
+
+    def _move_down(self):
+        idx = self._selected_idx()
+        if idx is None or idx >= len(self._staff) - 1:
+            return
+        self._staff[idx], self._staff[idx + 1] = self._staff[idx + 1], self._staff[idx]
+        self._refresh_tree()
+        self.tree.selection_set(str(idx + 1))
+
+    def _save(self):
+        if self._current_tqf3_id is None:
+            messagebox.showwarning("แจ้งเตือน", "กรุณาเลือก มคอ.3 ก่อน", parent=self); return
+        for i, s in enumerate(self._staff):
+            s["seq"] = i
+        self.result = {"tqf3_id": self._current_tqf3_id, "staff": self._staff}
+        self.destroy()
+
+
+class _PersonRowDialog(tk.Toplevel):
+    """Sub-dialog: add or edit a single staff person."""
+    ROLE_LABELS = {"committee": "คณะกรรมการบริหารรายวิชา", "instructor": "ผู้สอนรายวิชา"}
+
+    def __init__(self, parent, row: dict = None):
+        super().__init__(parent)
+        self.title("แก้ไขบุคลากร" if row else "เพิ่มบุคลากร")
+        self.resizable(False, False)
+        self.geometry("440x200")
+        self.grab_set()
+        self.result = None
+        row = row or {}
+
+        frm = tk.Frame(self, bg=BG, padx=16, pady=12)
+        frm.pack(fill="both", expand=True)
+        tk.Label(frm, text="บทบาท:", bg=BG, fg=FG, font=FONT_B,
+                 anchor="w").grid(row=0, column=0, sticky="w", pady=6)
+        self.role_var = tk.StringVar(value=row.get("role", "instructor"))
+        self._role_cb = ttk.Combobox(
+            frm, textvariable=self.role_var,
+            values=list(self.ROLE_LABELS.values()), state="readonly", width=32)
+        self._role_cb.set(self.ROLE_LABELS.get(row.get("role", "instructor"), "ผู้สอนรายวิชา"))
+        self._role_cb.grid(row=0, column=1, sticky="ew", pady=6)
+
+        tk.Label(frm, text="ชื่อ-สกุล:", bg=BG, fg=FG, font=FONT_B,
+                 anchor="w").grid(row=1, column=0, sticky="w", pady=6)
+        self.name_var = tk.StringVar(value=row.get("name", ""))
+        tk.Entry(frm, textvariable=self.name_var, width=36,
+                 font=FONT).grid(row=1, column=1, sticky="ew", pady=6)
+        frm.columnconfigure(1, weight=1)
+
+        btn_row = tk.Frame(self, bg=BG, pady=8)
+        btn_row.pack(fill="x", padx=16)
+        tk.Button(btn_row, text="ตกลง", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=4,
+                  command=self._ok).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="ยกเลิก", bg=GRAY, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=18, pady=4,
+                  command=self.destroy).pack(side="right")
+        self.wait_window()
+
+    def _ok(self):
+        name = self.name_var.get().strip()
+        if not name:
+            messagebox.showwarning("ข้อมูลไม่ครบ", "กรุณากรอกชื่อ-สกุล", parent=self); return
+        label = self._role_cb.get()
+        role = next((k for k, v in self.ROLE_LABELS.items() if v == label), "instructor")
+        self.result = {"role": role, "name": name}
         self.destroy()
 
 

@@ -1,245 +1,357 @@
-# ROADMAP v2 — TQF System Architecture Redesign
-อัพเดท: 2026-04-10
+# ROADMAP v2 - TQF System Architecture Redesign
+Updated: 2026-04-12
 
 ---
 
-## แนวคิดหลัก (3-Layer Architecture)
+## Goal
 
-ระบบแบ่งเป็น 3 ชั้น ชัดเจน:
+Redesign the system around a clear separation between:
 
+1. Curriculum-level data
+2. Course template data
+3. Term offering data
+
+This keeps long-lived academic structure separate from semester-specific teaching records.
+
+---
+
+## Core Architecture
+
+```text
+Layer 1: CURRICULUM
+  - curricula
+  - plos
+
+Layer 2: COURSE CATALOG (template layer)
+  - courses
+  - course_clos
+  - course_assessments
+  - course_teaching_plan
+  - course_resources
+
+Layer 3: COURSE OFFERING (term layer)
+  - course_offerings
+  - tqf3
+  - clos
+  - assessments
+  - teaching_plan
+  - tqf3_staff
+  - tqf5
+  - student_grades
 ```
-Layer 1: CURRICULUM (หลักสูตร)
-   └── มี PLOs (Program Learning Outcomes) ของหลักสูตร
 
-Layer 2: COURSE CATALOG (ฐานข้อมูลรายวิชา — "template")
-   └── วิชาแต่ละวิชา มี CLOs มาตรฐาน, การประเมิน, โยง PLO
-       → ข้อมูลนี้คงอยู่ข้ามปี/เทอม เปลี่ยนเมื่อปรับปรุงหลักสูตร
-
-Layer 3: COURSE OFFERING (การเปิดสอนแต่ละปี/เทอม)
-   └── มคอ.3  ← สร้างจาก template หรือ import ใหม่
-   └── เกรด   ← import แบบเดิม
-   └── มคอ.5  ← generate จาก มคอ.3 + เกรด
-```
+Rule of thumb:
+- Layer 2 is reused across years
+- Layer 3 represents a real opened course in a specific semester/year/section
 
 ---
 
-## Schema ใหม่ที่ต้องเพิ่ม
+## Agreed GUI Direction
 
-### ตารางที่มีอยู่แล้ว (คงไว้/แก้เล็กน้อย)
+This is the agreed UX direction as of 2026-04-12.
 
-| ตาราง | สถานะ | หมายเหตุ |
-|-------|--------|----------|
-| `curricula` | ✅ ใช้ได้ | เพิ่มแค่ column เล็กน้อยถ้าจำเป็น |
-| `courses` | ✅ ใช้ได้ | โครงสร้างครบแล้ว |
-| `tqf3` | ✅ ใช้ได้ | เพิ่ม `source_type` ('imported' / 'generated') |
-| `clos` | ✅ ใช้ได้ | ยังผูกกับ tqf3 เหมือนเดิม — คือ CLO "จริง" ของแต่ละเทอม |
-| `teaching_plan` | ✅ ใช้ได้ | คงไว้ |
-| `assessments` | ✅ ใช้ได้ | คงไว้ + เพิ่ม column |
-| `tqf5` | ✅ ใช้ได้ | คงไว้ |
-| `student_grades` | ✅ ใช้ได้ | คงไว้ |
+### Tab 1: Curriculum Catalog
+
+Purpose:
+- Manage master/template data only
+
+Scope:
+- curricula
+- courses
+- PLOs
+- default CLOs
+- default assessment templates
+- default teaching plan
+- default resources
+
+### Tab 2: Term Offerings
+
+Purpose:
+- Manage courses actually opened in a selected semester/year
+
+Scope:
+- offering records
+- section/special-section data
+- generate/open TQF3
+- TQF3 staff
+- later grades and TQF5
+
+### Key UX Rules
+
+- Term-specific actions should live in Tab 2, not in the catalog tab
+- `times offered` should be counted from `course_offerings`
+- section choices should eventually come from offering records, not a fixed N01-N09 / P01-P09 picker
+- Tab 2 should support a "create offerings from catalog" flow:
+  - choose curriculum
+  - choose semester
+  - choose academic year
+  - choose which catalog courses are opened that term
+
+### Recommended Tab 2 layout
+
+Use a 3-zone layout:
+
+1. Top control panel
+- semester
+- academic year
+- quick search
+- primary `open offering from catalog` action
+
+2. Main data view
+- offering table on the left
+- selected offering detail panel on the right
+
+3. Contextual action panel
+- all term-specific actions depend on the currently selected offering
+- keep these disabled until a row is selected
+
+Design notes:
+- keep the table compact for scanning
+- move rich details to the right-side panel
+- use zebra striping for readability
+- double-click should open a safe edit/detail action
 
 ---
 
-### ตารางใหม่ที่ต้องสร้าง
+## Schema Direction
 
-#### 1. `plos` — PLO ของแต่ละหลักสูตร
+### Existing tables to keep
+
+- `curricula`
+- `courses`
+- `tqf3`
+- `clos`
+- `teaching_plan`
+- `assessments`
+- `tqf5`
+- `student_grades`
+
+### Template-layer tables already added
+
+- `plos`
+- `course_clos`
+- `course_assessments`
+- `course_teaching_plan`
+- `course_resources`
+- `tqf3_staff`
+
+### Next required table
+
+#### `course_offerings`
+
+Recommended shape:
 
 ```sql
-CREATE TABLE IF NOT EXISTS plos (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    curriculum_id   INTEGER NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
-    plo_number      INTEGER NOT NULL,
-    category        TEXT    DEFAULT '',   -- ด้านความรู้ / ด้านทักษะทางปัญญา /
-                                          -- ด้านทักษะความสัมพันธ์ / ด้านการวิเคราะห์ตัวเลข
-    description     TEXT    NOT NULL,
-    UNIQUE(curriculum_id, plo_number)
+CREATE TABLE IF NOT EXISTS course_offerings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id     INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    curriculum_id INTEGER NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
+    semester      INTEGER NOT NULL,
+    year          INTEGER NOT NULL,
+    section_code  TEXT    NOT NULL,
+    is_special    INTEGER NOT NULL DEFAULT 0,
+    status        TEXT    NOT NULL DEFAULT 'planned',
+    source_type   TEXT    NOT NULL DEFAULT 'catalog',
+    created_at    TEXT    DEFAULT (datetime('now','localtime')),
+    updated_at    TEXT    DEFAULT (datetime('now','localtime')),
+    UNIQUE(course_id, semester, year, section_code)
 );
 ```
 
-#### 2. `course_clos` — CLO มาตรฐานของวิชา (template)
-
-```sql
-CREATE TABLE IF NOT EXISTS course_clos (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id           INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    clo_number          INTEGER NOT NULL,
-    description         TEXT    NOT NULL,
-    domain              TEXT    DEFAULT '',   -- ด้านความรู้ / ทักษะ / จริยธรรม ฯลฯ
-    teaching_strategy   TEXT    DEFAULT '',   -- วิธีการสอน (บรรยาย, สัมมนา, ปฏิบัติ)
-    assessment_method   TEXT    DEFAULT '',   -- วิธีวัด (สอบ, รายงาน, สังเกต)
-    pass_threshold_pct  REAL    DEFAULT 50.0, -- เกณฑ์ผ่าน % (ผ่านต้องได้กี่ %)
-    plo_mapping         TEXT    DEFAULT '[]', -- JSON: [1, 3, 4] → PLO number ที่สอดคล้อง
-    UNIQUE(course_id, clo_number)
-);
-```
-
-#### 3. `course_assessments` — แผนการประเมินมาตรฐานของวิชา (template)
-
-```sql
-CREATE TABLE IF NOT EXISTS course_assessments (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_id       INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    name            TEXT    NOT NULL,         -- สอบกลางภาค / สอบปลายภาค / งาน / ฯลฯ
-    full_score      REAL    DEFAULT 100,      -- คะแนนเต็มของรายการนี้
-    weight_pct      REAL    NOT NULL DEFAULT 0, -- น้ำหนัก % รวมทุกรายการต้องได้ 100
-    clo_mapping     TEXT    DEFAULT '[]',     -- JSON: [clo_number, ...] CLO ที่วัดผ่านนี้
-    eval_criteria   TEXT    DEFAULT '',       -- เกณฑ์การให้คะแนน/รายละเอียดกิจกรรม
-    pass_threshold  REAL    DEFAULT 50.0      -- เกณฑ์ผ่านของรายการนี้ %
-);
-```
+Notes:
+- Prefer one row per actual section/offering
+- This fits TQF3, grades, and TQF5 better than grouping many sections into one row
 
 ---
 
-## ความสัมพันธ์ตาราง (ERD ฉบับใหม่)
+## Data Relationship Summary
 
-```
+```text
 curricula
-│   └── plos (curriculum_id)          ← ใหม่
-│
-└── courses (curriculum_id)
-    │
-    ├── course_clos (course_id)        ← ใหม่: CLO มาตรฐาน + โยง PLO
-    │       plo_mapping → plos
-    │
-    ├── course_assessments (course_id) ← ใหม่: แผนประเมินมาตรฐาน
-    │       clo_mapping → course_clos
-    │
-    └── tqf3 (course_id)              ← "การเปิดสอน" แต่ละปี/เทอม
-         │    source_type: 'generated' | 'imported'
-         │
-         ├── clos (tqf3_id)           ← CLO จริงของเทอมนี้ (copy จาก course_clos หรือ import ใหม่)
-         │       plo_mapping → JSON
-         │
-         ├── assessments (tqf3_id)    ← การประเมินจริงของเทอมนี้
-         ├── teaching_plan (tqf3_id)
-         │
-         └── tqf5 (tqf3_id)
-               ├── student_grades (tqf5_id)
-               └── teaching_actual (tqf5_id)
+  -> plos
+  -> courses
+       -> course_clos
+       -> course_assessments
+       -> course_teaching_plan
+       -> course_resources
+       -> course_offerings
+            -> tqf3
+                 -> clos
+                 -> assessments
+                 -> teaching_plan
+                 -> tqf3_staff
+                 -> tqf5
+                      -> student_grades
 ```
+
+Important distinction:
+- `course_*` tables are defaults/templates
+- `tqf3`-side tables are offering-specific snapshots or overrides
 
 ---
 
-## Workflow การทำงานใหม่
+## Workflow Direction
 
-### Workflow A: เพิ่มวิชาใหม่ในหลักสูตร
-```
-1. เลือกหลักสูตร (curricula)
-2. กรอกข้อมูลวิชา (courses)
-3. กรอก CLO มาตรฐาน (course_clos) + โยง PLO
-4. กรอกแผนการประเมิน (course_assessments)
-→ วิชาพร้อมสำหรับเปิดสอนได้ทุกปี
-```
+### Workflow A: Maintain curriculum/catalog data
 
-### Workflow B: เปิดสอนวิชา (แต่ละปี/เทอม)
-```
-เลือกวิชาจาก Catalog
-    ↓
-[ตัวเลือก] เลือกวิธีสร้าง มคอ.3:
-   Option 1: "สร้างจาก template" → copy course_clos → clos, เปลี่ยนแค่ ปี/เทอม
-   Option 2: "Import ไฟล์ มคอ.3" → parse docx/pdf แบบเดิม (override clos)
-    ↓
-import เกรด (แบบเดิม)
-    ↓
-สร้าง มคอ.5 (generate จาก มคอ.3 + เกรด)
-```
+1. Select curriculum
+2. Add or edit course master data
+3. Maintain PLOs
+4. Maintain default CLOs and PLO mapping
+5. Maintain default assessments
+6. Maintain default teaching plan
+7. Maintain default resources
 
-### Workflow C: ดูผล PLO Achievement (อนาคต)
-```
-เลือกหลักสูตร + ปีการศึกษา
-→ รวม clo_results ของทุกวิชา + plo_mapping
-→ แสดง % นักศึกษาที่ผ่านแต่ละ PLO
-```
+### Workflow B: Manage a teaching term
+
+1. Choose curriculum
+2. Choose semester
+3. Choose academic year
+4. Search/filter existing offerings for that term
+5. Add offerings from the catalog if missing
+6. Select one offering
+7. Use contextual actions for TQF3 / staff / term-specific work
 
 ---
 
-## การเปลี่ยนแปลงที่ต้องทำในโค้ด
+## Implementation Order
 
-### database.py
-- เพิ่ม 3 ตาราง: `plos`, `course_clos`, `course_assessments`
-- เพิ่ม column ใน `tqf3`: `source_type TEXT DEFAULT 'imported'`
-- เพิ่ม migration สำหรับ DB เก่า
-- เพิ่ม CRUD functions: `upsert_plo()`, `upsert_course_clo()`, `get_course_clos()`, `copy_course_clos_to_tqf3()`, `get_plos()`
+### Phase 2A - Tab 2 layout cleanup
+- [x] rebuild Tab 2 into top controls + offering list + detail panel + contextual actions
+- [ ] remove crowded mixed-purpose buttons from the old toolbar completely
 
-### import_tqf3.py
-- หลัง import สำเร็จ: sync CLO ที่ parse ได้ → `course_clos` ด้วย (ถ้ายังไม่มี)
-- บันทึก `plo_mapping` ถ้า parse ได้จากไฟล์
+### Phase 2B - Selection-state behavior
+- [x] disable actions until an offering is selected
+- [x] bind selected-offering summary into the action panel
+- [ ] add safe double-click behavior
 
-### input_gui.py — Tab ใหม่และ Dialog ใหม่
+### Phase 2C - Search and readability
+- [x] add quick filter
+- [x] add zebra striping
+- [ ] keep the visible table columns compact
 
-| Component | คำอธิบาย |
-|-----------|----------|
-| **Tab 3: หลักสูตร & รายวิชา** | ซ้าย=dropdown หลักสูตร + ตารางวิชา, ขวา=รายละเอียดวิชา + CLO มาตรฐาน |
-| **CourseAddDialog** | form เพิ่มวิชาใหม่ (code, ชื่อ, หน่วยกิต, ประเภท, คำอธิบาย, prerequisite) |
-| **CourseCLOEditor** | กรอก/แก้ไข CLO มาตรฐาน + PLO mapping + เกณฑ์ผ่าน (embedded table หรือ popup) |
-| **TQF3GenerateDialog** | เลือกปี/เทอม/อาจารย์ + เลือก mode (จาก template / import ใหม่) |
-| **PLOManagerDialog** | จัดการ PLO ของแต่ละหลักสูตร (add/edit/delete) |
+### Phase 2D - Offering-first actions
+- make selected offering the default context for:
+  - TQF3 generation/open
+  - TQF3 staff
+  - later TQF5 / grades
 
-### generate_tqf3.py (ไฟล์ใหม่)
-- `generate_tqf3_docx(course_id, semester, year, output_path)`
-- อ่านข้อมูลจาก `courses`, `course_clos`, `course_assessments`, `plos`
-- เติมลง template Word ที่ผู้ใช้ให้
+### Phase 2E - Bulk creation from catalog
+- add `open offerings from catalog`
+- support selecting multiple catalog courses to create term offerings
 
-### import_courses_excel.py (ไฟล์ใหม่)
-- อ่าน Excel template → bulk insert `courses` + `course_clos`
+### Phase 2F - Section source-of-truth cleanup
+- switch section choice logic to offering-backed records
+- keep fixed section lists only as backward-compatible fallback during transition
 
----
+Output:
+- reusable course template for future offerings
 
-## จุดที่น่าระวัง / ข้อแนะนำ
+### Workflow B: Create real offerings for a term
 
-### ✅ สิ่งที่ออกแบบได้ดี
+1. Go to Tab 2
+2. Select curriculum, semester, academic year
+3. Create offerings from catalog
+4. Select which courses are actually opened
+5. Create one or more section records
 
-1. **แยก Layer ชัดเจน** — course template vs tqf3 offering ทำให้ไม่ต้องกรอก CLO ซ้ำทุกปี
-2. **backward compatible** — ตาราง `clos` ยังผูกกับ `tqf3` เหมือนเดิม ไม่ต้อง migrate data เก่า
-3. **PLO tracking** — เมื่อมีข้อมูล `plo_mapping` ใน clos + ผล `clo_results` ใน tqf5 สามารถคำนวณ PLO achievement ได้ในอนาคต
+Output:
+- official offering rows in `course_offerings`
 
-### ⚠️ จุดที่ต้องระวัง
+### Workflow C: Work on a selected offering
 
-**1. CLO "ล็อค" เมื่อสร้าง มคอ.3**
-เมื่อ generate มคอ.3 จาก template ระบบ copy `course_clos` → `clos` (ผูกกับ tqf3)
-หากภายหลังอัพเดท `course_clos` ตาราง clos ของ tqf3 เก่า**ไม่เปลี่ยน** (เพราะเป็น snapshot)
-→ แนะนำ: แสดง warning ใน GUI ถ้า course_clos ถูกแก้ไขหลัง tqf3 สร้างไปแล้ว
+1. Open offering detail
+2. Generate TQF3 from template data or open an imported record
+3. Edit TQF3-specific staff or section details
+4. Import grades later
+5. Generate TQF5 later
 
-**2. PLO mapping เก็บเป็น JSON**
-`plo_mapping TEXT DEFAULT '[]'` → ใช้ JSON เพราะ mapping เป็น many-to-many แบบง่าย
-ข้อดี: ง่าย ข้อเสีย: query เพื่อ filter "วิชาที่ตอบสนอง PLO X" ต้องใช้ Python ไม่ใช่ SQL
-→ ยอมรับได้สำหรับขนาดข้อมูลนี้ (ไม่ใหญ่)
-
-**3. `course_assessments.weight_pct` ต้องรวมกัน 100%**
-ระบบควรตรวจสอบว่าผลรวม weight_pct ของทุกรายการในวิชาเดียวกัน = 100
-→ ต้องมี validation ใน GUI และ/หรือ database layer
-
-**4. เมื่อ import มคอ.3 → sync course_clos?**
-ถ้า import TQF3 ไฟล์ใหม่แล้ว CLO เปลี่ยนจาก course_clos เดิม — ควรทำอย่างไร?
-→ แนะนำ: **ถามผู้ใช้** ว่าจะ "อัพเดท CLO มาตรฐาน" ด้วยหรือไม่
-   เพราะบางทีเปลี่ยนเฉพาะปีนั้น ไม่ได้เปลี่ยน template จริงๆ
-
-**5. `course_assessments` vs `assessments` (tqf3)**
-มี 2 ระดับ: template (course) และ จริง (tqf3)
-→ เมื่อ generate มคอ.3 ต้อง copy `course_assessments` → `assessments` เหมือนกัน
-→ แต่ถ้า import มคอ.3 ใหม่ทับ ให้ใช้ assessments ที่ parse ได้จากไฟล์แทน
+Output:
+- full semester-specific teaching record
 
 ---
 
-## ลำดับการพัฒนาที่แนะนำ
+## Snapshot Strategy
 
-| ลำดับ | งาน | ขึ้นอยู่กับ |
-|-------|-----|------------|
-| 1 | เพิ่ม `plos`, `course_clos`, `course_assessments` ใน schema + migration | — |
-| 2 | Tab 3 Course Catalog + PLO Manager + CourseAddDialog | schema ใหม่ |
-| 3 | CourseCLOEditor (กรอก CLO + PLO mapping + เกณฑ์ผ่าน) | schema ใหม่ |
-| 4 | Sync course_clos เมื่อ import มคอ.3 (opt-in) | Tab 3 |
-| 5 | TQF3GenerateDialog + copy_course_clos_to_tqf3() | Course Catalog |
-| 6 | generate_tqf3.py + template Word | **รอ template จากผู้ใช้** |
-| 7 | import_courses_excel.py (bulk add) | schema ใหม่ |
-| 8 | PLO Achievement report (ระยะยาว) | clo_results ใน tqf5 |
+Recommended behavior:
+
+- Before TQF3 exists:
+  - offering reads defaults from `course_*` tables
+- When TQF3 is generated:
+  - snapshot template data into offering-specific tables
+- After TQF3 exists:
+  - edits affect the offering snapshot, not the master template
+
+This keeps:
+- catalog data reusable
+- historical TQF3 records stable
 
 ---
 
-## สิ่งที่รอผู้ใช้
+## Risks and Design Notes
 
-| รายการ | ใช้สำหรับ | บล็อกลำดับ |
-|--------|-----------|------------|
-| Template มคอ.3 (.docx) แบบละเอียด | ออกแบบ generate_tqf3.py, ยืนยัน fields ที่ต้องเก็บ | ลำดับ 6 |
-| รายชื่อ PLO ของหลักสูตร 65 และ 69 | กรอกข้อมูล plos table | ลำดับ 1-2 |
-| รายวิชาเลือก หลักสูตร 65 | ความครบถ้วนของ catalog | ลำดับ 2 |
+### 1. Snapshot drift
+
+If `course_clos` changes after a TQF3 record already exists, the old TQF3 should not silently change.
+
+Recommendation:
+- keep TQF3 as a snapshot
+- show a warning in GUI when template data changed after a TQF3 was created
+
+### 2. Many-to-many mapping storage
+
+Current JSON-based mappings such as `plo_mapping` are acceptable for current scale.
+
+Tradeoff:
+- simple to store
+- not ideal for complex SQL analytics
+
+### 3. Assessment weights
+
+`course_assessments.weight_pct` and offering-level `assessments.weight_pct` should validate to 100%.
+
+### 4. Dynamic section picker
+
+The current fixed N01-N09 / P01-P09 picker is only a temporary solution.
+
+Future rule:
+- section choices come from `course_offerings`
+
+### 5. Source of "times offered"
+
+Use:
+- count of `course_offerings`
+
+Do not use:
+- count of generated TQF3 rows
+
+Reason:
+- offering records are the business truth
+
+---
+
+## Implementation Priority
+
+Current status:
+- Step 1 is done in the DB layer: `course_offerings` exists, legacy `tqf3` rows are backfilled, and `tqf3.offering_id` is linked
+- Step 2 is partially landed in the GUI: Tab 2 has term filters, an offering list, and offering-scoped actions
+- Step 3 is the next active slice: bulk "create offerings from catalog"
+
+1. Add `course_offerings` table and migration
+   Status: done in `database.py`
+2. Refactor Tab 1 / Tab 2 responsibilities
+   Status: partially landed in `input_gui.py`
+3. Build "create offerings from catalog" flow
+   Status: next active implementation slice
+4. Move term-specific actions to Tab 2
+5. Replace fixed section picker with offering-backed sections
+6. Recompute "times offered" from offerings
+7. Add later reports that aggregate by offering history
+
+---
+
+## Open Inputs Still Needed
+
+- Final decision on whether every section gets its own offering row
+- Real PLO data for curricula 65 and 69
+- Continued edge-case testing for long TQF3 content and template layout behavior
