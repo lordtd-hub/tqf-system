@@ -58,9 +58,25 @@ CREATE TABLE IF NOT EXISTS courses (
     UNIQUE(code, curriculum_id)
 );
 
+CREATE TABLE IF NOT EXISTS course_offerings (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id           INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    curriculum_id       INTEGER NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
+    semester            INTEGER NOT NULL,
+    year                INTEGER NOT NULL,
+    section_code        TEXT    NOT NULL,
+    is_special          INTEGER NOT NULL DEFAULT 0,
+    status              TEXT    NOT NULL DEFAULT 'active',
+    source_type         TEXT    NOT NULL DEFAULT 'catalog',
+    created_at          TEXT    DEFAULT (datetime('now','localtime')),
+    updated_at          TEXT    DEFAULT (datetime('now','localtime')),
+    UNIQUE(course_id, semester, year, section_code)
+);
+
 CREATE TABLE IF NOT EXISTS tqf3 (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     course_id           INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    offering_id         INTEGER REFERENCES course_offerings(id) ON DELETE SET NULL,
     semester            INTEGER NOT NULL,
     year                INTEGER NOT NULL,
     instructor_main     TEXT    DEFAULT '',
@@ -256,6 +272,8 @@ def init_db():
 
         ensure_column("tqf3", "is_special", "INTEGER NOT NULL DEFAULT 0")
         ensure_column("tqf3", "source_type", "TEXT DEFAULT 'imported'")
+        ensure_column("tqf3", "offering_id", "INTEGER REFERENCES course_offerings(id)")
+        ensure_column("courses", "curriculum_id", "INTEGER REFERENCES curricula(id)")
         ensure_column("teaching_plan", "week_label", "TEXT DEFAULT ''")
         ensure_column("teaching_plan", "llo_text", "TEXT DEFAULT ''")
         ensure_column("teaching_plan", "activities", "TEXT DEFAULT ''")
@@ -268,9 +286,144 @@ def init_db():
         ensure_column("assessments", "assessment_period", "TEXT DEFAULT ''")
         ensure_column("assessments", "eval_criteria", "TEXT DEFAULT ''")
         ensure_column("assessments", "pass_threshold", "REAL DEFAULT 50.0")
+        ensure_column("course_assessments", "full_score", "REAL DEFAULT 100")
         ensure_column("course_assessments", "assessment_period", "TEXT DEFAULT ''")
+        ensure_column("course_assessments", "eval_criteria", "TEXT DEFAULT ''")
+        ensure_column("course_assessments", "pass_threshold", "REAL DEFAULT 50.0")
         ensure_column("plos", "plo_code", "TEXT DEFAULT ''")
         ensure_column("curricula", "graduation_req", "TEXT DEFAULT ''")
+
+        def _index_columns(table_name: str):
+            result = []
+            for row in conn.execute(f"PRAGMA index_list({table_name})").fetchall():
+                if not row[2]:
+                    continue
+                idx_name = row[1]
+                cols = [
+                    info[2]
+                    for info in conn.execute(f"PRAGMA index_info('{idx_name}')").fetchall()
+                ]
+                result.append(cols)
+            return result
+
+        def ensure_tqf3_unique_shape():
+            expected = ["course_id", "semester", "year", "is_special"]
+            unique_indexes = _index_columns("tqf3")
+            if expected in unique_indexes:
+                return
+
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute(
+                """
+                CREATE TABLE tqf3__new (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    course_id           INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                    offering_id         INTEGER REFERENCES course_offerings(id) ON DELETE SET NULL,
+                    semester            INTEGER NOT NULL,
+                    year                INTEGER NOT NULL,
+                    instructor_main     TEXT    DEFAULT '',
+                    instructors_json    TEXT    DEFAULT '[]',
+                    location            TEXT    DEFAULT '',
+                    objectives          TEXT    DEFAULT '',
+                    source_file         TEXT    DEFAULT '',
+                    source_type         TEXT    DEFAULT 'imported',
+                    is_special          INTEGER NOT NULL DEFAULT 0,
+                    imported_at         TEXT    DEFAULT (datetime('now','localtime')),
+                    UNIQUE(course_id, semester, year, is_special)
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO tqf3__new (
+                    id, course_id, offering_id, semester, year, instructor_main,
+                    instructors_json, location, objectives, source_file,
+                    source_type, is_special, imported_at
+                )
+                SELECT
+                    id, course_id, offering_id, semester, year,
+                    COALESCE(instructor_main, ''),
+                    COALESCE(instructors_json, '[]'),
+                    COALESCE(location, ''),
+                    COALESCE(objectives, ''),
+                    COALESCE(source_file, ''),
+                    COALESCE(source_type, 'imported'),
+                    COALESCE(is_special, 0),
+                    COALESCE(imported_at, datetime('now','localtime'))
+                FROM tqf3
+                """
+            )
+            conn.execute("DROP TABLE tqf3")
+            conn.execute("ALTER TABLE tqf3__new RENAME TO tqf3")
+            conn.execute("PRAGMA foreign_keys=ON")
+            print("[DB] Migration: rebuilt tqf3 unique constraint to include is_special")
+
+        ensure_tqf3_unique_shape()
+        ensure_column("tqf3", "offering_id", "INTEGER REFERENCES course_offerings(id)")
+
+        def ensure_course_offerings_backfill():
+            rows = conn.execute(
+                """
+                SELECT
+                    t.id AS tqf3_id,
+                    t.course_id,
+                    t.offering_id,
+                    t.semester,
+                    t.year,
+                    COALESCE(t.is_special, 0) AS is_special,
+                    COALESCE(t.source_type, 'imported') AS source_type,
+                    COALESCE(c.curriculum_id, 0) AS curriculum_id
+                FROM tqf3 t
+                JOIN courses c ON c.id = t.course_id
+                """
+            ).fetchall()
+            if not rows:
+                return
+
+            touched = 0
+            for row in rows:
+                section_code = "P01" if row["is_special"] else "N01"
+                conn.execute(
+                    """
+                    INSERT INTO course_offerings (
+                        course_id, curriculum_id, semester, year,
+                        section_code, is_special, status, source_type
+                    )
+                    VALUES (?,?,?,?,?,?,?,?)
+                    ON CONFLICT(course_id, semester, year, section_code) DO UPDATE SET
+                        curriculum_id=excluded.curriculum_id,
+                        is_special=excluded.is_special,
+                        updated_at=datetime('now','localtime')
+                    """,
+                    (
+                        row["course_id"],
+                        row["curriculum_id"],
+                        row["semester"],
+                        row["year"],
+                        section_code,
+                        row["is_special"],
+                        "active",
+                        row["source_type"] or "catalog",
+                    ),
+                )
+                offering = conn.execute(
+                    """
+                    SELECT id FROM course_offerings
+                    WHERE course_id=? AND semester=? AND year=? AND section_code=?
+                    """,
+                    (row["course_id"], row["semester"], row["year"], section_code),
+                ).fetchone()
+                if offering and row["offering_id"] != offering["id"]:
+                    conn.execute(
+                        "UPDATE tqf3 SET offering_id=? WHERE id=?",
+                        (offering["id"], row["tqf3_id"]),
+                    )
+                    touched += 1
+
+            if touched:
+                print(f"[DB] Migration: linked {touched} tqf3 row(s) to course_offerings")
+
+        ensure_course_offerings_backfill()
 
     print(f"[DB] Initialized: {DB_PATH}")
 
@@ -370,20 +523,158 @@ def get_course_by_code(code, curriculum_id=None):
         return dict(row) if row else None
 
 
+def upsert_course_offering(course_id, semester, year, curriculum_id=None,
+                           section_code="", is_special=None,
+                           status="active", source_type="catalog") -> int:
+    with get_conn() as conn:
+        if curriculum_id is None:
+            course = conn.execute(
+                "SELECT curriculum_id FROM courses WHERE id=?",
+                (course_id,),
+            ).fetchone()
+            curriculum_id = course["curriculum_id"] if course else None
+        if curriculum_id is None:
+            raise ValueError(f"Course {course_id} has no curriculum_id")
+
+        if is_special is None:
+            is_special = str(section_code or "").upper().startswith("P")
+        is_special = int(bool(is_special))
+
+        section_code = (section_code or "").strip().upper()
+        if not section_code:
+            section_code = "P01" if is_special else "N01"
+
+        conn.execute(
+            """
+            INSERT INTO course_offerings (
+                course_id, curriculum_id, semester, year,
+                section_code, is_special, status, source_type
+            )
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(course_id, semester, year, section_code) DO UPDATE SET
+                curriculum_id=excluded.curriculum_id,
+                is_special=excluded.is_special,
+                status=excluded.status,
+                source_type=excluded.source_type,
+                updated_at=datetime('now','localtime')
+            """,
+            (
+                course_id,
+                curriculum_id,
+                semester,
+                year,
+                section_code,
+                is_special,
+                status,
+                source_type,
+            ),
+        )
+        row = conn.execute(
+            """
+            SELECT id FROM course_offerings
+            WHERE course_id=? AND semester=? AND year=? AND section_code=?
+            """,
+            (course_id, semester, year, section_code),
+        ).fetchone()
+        return row["id"]
+
+
+def get_course_offerings(course_id=None, curriculum_id=None, semester=None, year=None):
+    where = []
+    params = []
+    if course_id is not None:
+        where.append("o.course_id=?")
+        params.append(course_id)
+    if curriculum_id is not None:
+        where.append("o.curriculum_id=?")
+        params.append(curriculum_id)
+    if semester is not None:
+        where.append("o.semester=?")
+        params.append(semester)
+    if year is not None:
+        where.append("o.year=?")
+        params.append(year)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                o.*,
+                c.code,
+                c.name_th,
+                c.course_type,
+                cu.version AS curriculum_version,
+                t.id AS tqf3_id,
+                COALESCE(t.source_type, '') AS tqf3_source_type
+            FROM course_offerings o
+            JOIN courses c ON c.id = o.course_id
+            LEFT JOIN curricula cu ON cu.id = o.curriculum_id
+            LEFT JOIN tqf3 t ON t.offering_id = o.id
+            {where_sql}
+            ORDER BY o.year DESC, o.semester DESC, o.section_code, c.code
+            """,
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def upsert_tqf3(course_id, semester, year, instructor_main="",
                 instructors=None, location="", objectives="",
-                source_file="", is_special=0) -> int:
+                source_file="", is_special=0, offering_id=None,
+                section_code="") -> int:
     instructors_json = json.dumps(instructors or [], ensure_ascii=False)
     is_special = int(bool(is_special))
     with get_conn() as conn:
+        if offering_id is None:
+            course = conn.execute(
+                "SELECT curriculum_id FROM courses WHERE id=?",
+                (course_id,),
+            ).fetchone()
+            if not course or course["curriculum_id"] is None:
+                raise ValueError(f"Course {course_id} has no curriculum_id")
+            section_code = (section_code or "").strip().upper() or ("P01" if is_special else "N01")
+            conn.execute(
+                """
+                INSERT INTO course_offerings (
+                    course_id, curriculum_id, semester, year,
+                    section_code, is_special, status, source_type
+                )
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(course_id, semester, year, section_code) DO UPDATE SET
+                    curriculum_id=excluded.curriculum_id,
+                    is_special=excluded.is_special,
+                    updated_at=datetime('now','localtime')
+                """,
+                (
+                    course_id,
+                    course["curriculum_id"],
+                    semester,
+                    year,
+                    section_code,
+                    is_special,
+                    "active",
+                    "imported" if source_file else "catalog",
+                ),
+            )
+            offering = conn.execute(
+                """
+                SELECT id FROM course_offerings
+                WHERE course_id=? AND semester=? AND year=? AND section_code=?
+                """,
+                (course_id, semester, year, section_code),
+            ).fetchone()
+            offering_id = offering["id"]
+
         conn.execute(
             """
             INSERT INTO tqf3 (
-                course_id, semester, year, instructor_main,
+                course_id, offering_id, semester, year, instructor_main,
                 instructors_json, location, objectives, source_file, is_special
             )
-            VALUES (?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(course_id, semester, year, is_special) DO UPDATE SET
+                offering_id=excluded.offering_id,
                 instructor_main=excluded.instructor_main,
                 instructors_json=excluded.instructors_json,
                 location=excluded.location,
@@ -392,13 +683,18 @@ def upsert_tqf3(course_id, semester, year, instructor_main="",
                 imported_at=datetime('now','localtime')
             """,
             (
-                course_id, semester, year, instructor_main,
+                course_id, offering_id, semester, year, instructor_main,
                 instructors_json, location, objectives, source_file, is_special,
             ),
         )
         row = conn.execute(
-            "SELECT id FROM tqf3 WHERE course_id=? AND semester=? AND year=? AND is_special=?",
-            (course_id, semester, year, is_special),
+            """
+            SELECT id FROM tqf3
+            WHERE course_id=? AND semester=? AND year=? AND is_special=?
+            ORDER BY CASE WHEN offering_id=? THEN 0 ELSE 1 END, id
+            LIMIT 1
+            """,
+            (course_id, semester, year, is_special, offering_id),
         ).fetchone()
         return row["id"]
 
@@ -410,6 +706,7 @@ def get_tqf3(tqf3_id):
             SELECT t.*, c.code, c.name_th
             FROM tqf3 t
             JOIN courses c ON c.id=t.course_id
+            LEFT JOIN course_offerings o ON o.id=t.offering_id
             WHERE t.id=?
             """,
             (tqf3_id,),
@@ -427,9 +724,10 @@ def get_all_tqf3(course_id=None):
         if course_id:
             rows = conn.execute(
                 """
-                SELECT t.*, c.code, c.name_th
+                SELECT t.*, c.code, c.name_th, o.section_code
                 FROM tqf3 t
                 JOIN courses c ON c.id=t.course_id
+                LEFT JOIN course_offerings o ON o.id=t.offering_id
                 WHERE t.course_id=?
                 ORDER BY t.year DESC, t.semester DESC
                 """,
@@ -438,9 +736,10 @@ def get_all_tqf3(course_id=None):
         else:
             rows = conn.execute(
                 """
-                SELECT t.*, c.code, c.name_th
+                SELECT t.*, c.code, c.name_th, o.section_code
                 FROM tqf3 t
                 JOIN courses c ON c.id=t.course_id
+                LEFT JOIN course_offerings o ON o.id=t.offering_id
                 ORDER BY t.year DESC, t.semester DESC
                 """
             ).fetchall()
@@ -1276,6 +1575,15 @@ def copy_course_template_to_tqf3(course_id: int, tqf3_id: int):
             )
 
         conn.execute("UPDATE tqf3 SET source_type='generated' WHERE id=?", (tqf3_id,))
+        conn.execute(
+            """
+            UPDATE course_offerings
+            SET source_type='generated',
+                updated_at=datetime('now','localtime')
+            WHERE id=(SELECT offering_id FROM tqf3 WHERE id=?)
+            """,
+            (tqf3_id,),
+        )
 
     print(
         f"[DB] Copied course template -> tqf3_id={tqf3_id}: "

@@ -6,9 +6,13 @@
 ---
 
 ## 🟢 Latest Status
-Updated: 2026-04-13 (session 2)  |  Machine: PC  |  Tool: Codex
+Updated: 2026-04-13 (session 3)  |  Machine: PC  |  Tool: Codex
 
 ### Completed this session
+- [x] Added explicit routine git command guidance to `RULES.md` and `CODEX_CONTEXT.md`
+- [x] Repaired `generate_tqf3.py` after a broken duplicated tail and made template lookup resilient to the real template file path
+- [x] Added/verified `tests/test_generate_tqf3.py` and re-ran generator + regression suites -> OK (19 tests)
+- [x] Cleaned the repo index, staged the remaining intended files, and prepared the repo for a clean push
 - [x] Tab 2 offering UI cleanup: added live offering search (`code/name/section`) and zebra striping in the offering table
 - [x] Moved offering-specific actions out of the crowded left list area into a right-side contextual action box
 - [x] Added selected-offering summary text in the action box and kept all offering actions disabled until a row is selected

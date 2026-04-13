@@ -1,149 +1,263 @@
 # TQF System — Project Reference
-ระบบฐานข้อมูล มคอ. สาขาวิชาคณิตศาสตร์ มหาวิทยาลัยราชภัฏสุราษฎร์ธานี
+Mathematics Department TQF Database System, Suratthani Rajabhat University
 
 ---
 
-## โครงสร้างไฟล์
+## File Structure
 
 ```
 tqf_system/
-├── database.py          ← DB layer: schema + CRUD helpers ทั้งหมด
-├── import_tqf3.py       ← Parser มคอ.3 (.docx) → ฐานข้อมูล
-├── import_grades.py     ← Parser ไฟล์เกรด (.doc/.rtf/.docx) → ฐานข้อมูล
-├── input_gui.py         ← GUI หลัก (tkinter) สำหรับดูข้อมูลและนำเข้าไฟล์
-├── app.py               ← Streamlit web app (ทางเลือก)
-├── generate_tqf5.py     ← สร้างไฟล์มคอ.5 .docx จากข้อมูลในฐานข้อมูล
-├── tqf_database.db      ← SQLite database (ไฟล์หลัก)
-├── tqf_database_view.xlsx ← Excel export ล่าสุด
-├── requirements.txt     ← Python dependencies
-├── นำเข้าข้อมูล.bat     ← ดับเบิลคลิกเปิด GUI
-├── export_excel.bat     ← ดับเบิลคลิก export Excel
-└── start.bat            ← เปิด Streamlit app (port 8501)
+├── database.py            ← DB layer: schema + all CRUD helpers
+├── import_tqf3.py         ← Parser: TQF3 (.docx) → DB
+├── import_grades.py       ← Parser: grade files (.doc/.rtf/.docx) → DB
+├── input_gui.py           ← Main GUI (tkinter)
+├── app.py                 ← Streamlit web app (alternative)
+├── generate_tqf3.py       ← Generate TQF3 .docx from DB
+├── generate_tqf5.py       ← Generate TQF5 .docx from DB
+├── tqf_database.db        ← SQLite database (main)
+├── tqf_database_view.xlsx ← Latest Excel export
+├── requirements.txt       ← Python dependencies
+├── นำเข้าข้อมูล.bat       ← Double-click to open GUI
+├── export_excel.bat        ← Double-click to export Excel
+└── start.bat              ← Open Streamlit app (port 8501)
 ```
+
+---
+
+## Schema Update Log
+
+### 2026-04-10
+- Added `course_teaching_plan` — weekly teaching plan template per course
+- Added `course_resources` — section 8 textbooks/articles/web resources per course
+- Added `tqf3_staff` — personnel and roles for section 9 per TQF3 record
+- Extended `teaching_plan`: added `week_label`, `llo_text`, `activities`, `media`, `assessment_tools`, `hours_theory`, `hours_practice`, `hours_self`
+- Extended `assessments` and `course_assessments`: added `full_score`, `assessment_period`, `eval_criteria`, `pass_threshold`
+- Updated `copy_course_template_to_tqf3()` to copy `course_clos`, `course_teaching_plan`, and detailed `course_assessments` into the tqf3 snapshot
+- Added `source_type` to `tqf3` to distinguish imported vs generated records
+
+### 2026-04-11
+- Fixed `instructors_json` corruption in tqf3 id=19 (SMA7005) — appendix headings were mistakenly stored as instructor names
+- Populated `tqf3_staff` for tqf3_id 1, 2, 3, 4, 19 from existing `instructors_json`/`instructor_main`
+- `generate_tqf3.py`: switched to template-fill approach (opens `แบบฟอร์ม มคอ. 3.docx`, fills in place)
+
+### 2026-04-13
+- Standardized the new Tab 2 offering manager UI text to Thai
+- Fixed the Tab 2 opening-history display path to render Thai offering labels cleanly instead of the garbled `เธ...` fallback
 
 ---
 
 ## Database Schema
 
-### ตาราง `curricula` — หลักสูตร
-| column | type | คำอธิบาย |
-|--------|------|-----------|
+### `curricula` — Curricula
+| Column | Type | Description |
+|--------|------|-------------|
 | id | INTEGER PK | |
 | version | TEXT UNIQUE | "65", "69" |
-| name_th | TEXT | ชื่อหลักสูตรภาษาไทย |
-| effective_year | INTEGER | ปีที่เริ่มใช้ (2565, 2569) |
+| name_th | TEXT | Thai curriculum name |
+| effective_year | INTEGER | Year adopted (2565, 2569) |
 
-ข้อมูลปัจจุบัน: id=1 (หลักสูตร 69), id=2 (หลักสูตร 65)
+Current data: id=1 (curriculum 69), id=2 (curriculum 65)
 
 ---
 
-### ตาราง `courses` — รายวิชา
-| column | type | คำอธิบาย |
-|--------|------|-----------|
+### `courses` — Courses
+| Column | Type | Description |
+|--------|------|-------------|
 | id | INTEGER PK | |
 | curriculum_id | INTEGER FK | → curricula.id |
-| code | TEXT | รหัสวิชา เช่น SMAC001 |
-| name_th / name_en | TEXT | ชื่อวิชา |
-| credits_text | TEXT | เช่น "3(3-0-6)" |
-| credit_lecture/lab/self | INTEGER | หน่วยกิตแยกส่วน |
-| course_type | TEXT | วิชาแกน / วิชาบังคับ / วิชาเลือก / สหกิจศึกษา |
-| description_th | TEXT | คำอธิบายรายวิชา |
+| code | TEXT | Course code e.g. SMAC001 |
+| name_th / name_en | TEXT | Course name |
+| credits_text | TEXT | e.g. "3(3-0-6)" |
+| credit_lecture/lab/self | INTEGER | Credit components |
+| course_type | TEXT | Core / Required / Elective / Co-op |
+| description_th / description_en | TEXT | Course description |
+| faculty | TEXT | Faculty name |
+| department | TEXT | Department name |
 | UNIQUE | | (code, curriculum_id) |
 
-**ข้อมูลปัจจุบัน:**
-- หลักสูตร 65 (curriculum_id=2): 26 วิชา (7 แกน + 16 บังคับ + 3 สหกิจ)
-- หลักสูตร 69 (curriculum_id=1): 40 วิชา (7 แกน + 14 บังคับ + 16 เลือก + 3 สหกิจ)
+**Current data:**
+- Curriculum 65 (curriculum_id=2): 26 courses (7 core + 16 required + 3 co-op)
+- Curriculum 69 (curriculum_id=1): 40 courses (7 core + 14 required + 16 elective + 3 co-op)
+
+### `course_offerings` โ€” Real Course Offerings
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | |
+| course_id | INTEGER FK | -> courses.id |
+| curriculum_id | INTEGER FK | -> curricula.id |
+| offering_id | INTEGER FK | -> course_offerings.id |
+| semester | INTEGER | 1 or 2 |
+| year | INTEGER | Academic year e.g. 2569 |
+| section_code | TEXT | Section code such as `N01` or `P01` |
+| is_special | INTEGER | 0=regular, 1=special |
+| status | TEXT | `active`, `planned`, or later workflow states |
+| source_type | TEXT | `catalog`, `generated`, `imported` |
+| UNIQUE | | (course_id, semester, year, section_code) |
+
+Purpose:
+- Source of truth for real openings
+- Basis for the future Tab 2 `Term Offerings` UI
+- Used to compute `times offered`
 
 ---
 
-### ตาราง `tqf3` — มคอ.3 แต่ละภาค/ปี
-| column | type | คำอธิบาย |
-|--------|------|-----------|
+### `plos` — Program Learning Outcomes
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | |
+| curriculum_id | INTEGER FK | → curricula.id |
+| plo_number | TEXT | e.g. "1", "2" |
+| plo_code | TEXT | e.g. "PLO1" |
+| category | TEXT | Knowledge / Skill / Ethics / Personal |
+| description | TEXT | |
+| pass_threshold_pct | REAL | Default 50.0 |
+
+---
+
+### `tqf3` — TQF3 Records (per semester/year)
+| Column | Type | Description |
+|--------|------|-------------|
 | id | INTEGER PK | |
 | course_id | INTEGER FK | → courses.id |
-| semester | INTEGER | 1 หรือ 2 |
-| year | INTEGER | ปีการศึกษา เช่น 2568 |
-| instructor_main | TEXT | อาจารย์ผู้รับผิดชอบหลัก |
-| instructors_json | TEXT | JSON array รายชื่ออาจารย์ทั้งหมด |
-| objectives | TEXT | วัตถุประสงค์รายวิชา |
-| source_file | TEXT | path ไฟล์ต้นฉบับ |
-| UNIQUE | | (course_id, semester, year) |
+| semester | INTEGER | 1 or 2 |
+| year | INTEGER | Academic year e.g. 2568 |
+| instructor_main | TEXT | Primary responsible instructor |
+| instructors_json | TEXT | JSON array of all instructors (may contain garbage — always filter) |
+| objectives | TEXT | Course objectives |
+| source_file | TEXT | Path to source file |
+| source_type | TEXT | `imported` or `generated` |
+| is_special | INTEGER | 0=regular (N0x), 1=special section (P0x) |
+| UNIQUE | | (course_id, semester, year, is_special) |
 
 ---
 
-### ตาราง `clos` — CLOs (Course Learning Outcomes)
-| column | type | คำอธิบาย |
-|--------|------|-----------|
+### `tqf3_staff` — Personnel for TQF3 Section 9
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK | |
 | tqf3_id | INTEGER FK | → tqf3.id |
-| clo_number | INTEGER | ลำดับ CLO |
+| role | TEXT | `committee` or `instructor` |
+| seq | INTEGER | Display order |
+| name | TEXT | Person's name |
+
+---
+
+### `clos` — Course Learning Outcomes (TQF3 snapshot)
+| Column | Type | Description |
+|--------|------|-------------|
+| tqf3_id | INTEGER FK | → tqf3.id |
+| clo_number | INTEGER | CLO index |
 | description | TEXT | |
-| teaching_strategy | TEXT | วิธีสอน |
-| assessment_method | TEXT | วิธีวัดผล |
-| target_pct | REAL | ค่าเป้าหมาย % (default 50) |
+| plo_mapping | TEXT | JSON array of PLO numbers/codes |
+| teaching_strategy | TEXT | |
+| assessment_method | TEXT | |
+| pass_threshold_pct | REAL | Default 50.0 |
 | UNIQUE | | (tqf3_id, clo_number) |
 
 ---
 
-### ตาราง `tqf5` — มคอ.5 (ผลการสอน)
-| column | type | คำอธิบาย |
-|--------|------|-----------|
-| tqf3_id | INTEGER FK UNIQUE | → tqf3.id |
-| registered_count | INTEGER | จำนวนนักศึกษาที่ลงทะเบียน |
-| remaining_count | INTEGER | คงอยู่ |
-| withdrawn_count | INTEGER | ถอน |
-| grade_dist_json | TEXT | JSON {"A":4, "B+":3, ...} |
-| clo_results_json | TEXT | JSON ผลการประเมิน CLOs |
-| improvement_next | TEXT | แผนปรับปรุงรอบต่อไป |
+### `course_clos` — CLO Templates per Course
+| Column | Type | Description |
+|--------|------|-------------|
+| course_id | INTEGER FK | → courses.id |
+| clo_number | INTEGER | |
+| description | TEXT | |
+| plo_mapping | TEXT | JSON array |
+| pass_threshold_pct | REAL | |
+| teaching_strategy / assessment_method | TEXT | |
 
 ---
 
-### ตาราง `student_grades` — รายชื่อนักศึกษา
-| column | type | คำอธิบาย |
-|--------|------|-----------|
+### `assessments` — Assessment Plans (TQF3 snapshot)
+| Column | Description |
+|--------|-------------|
+| tqf3_id FK | |
+| name | Assessment name (midterm, final, etc.) |
+| full_score | Maximum score |
+| weight_pct | Weight percentage |
+| clo_mapping | JSON list of CLO numbers |
+| assessment_period | Time period |
+| eval_criteria | Criteria / rubric details |
+| pass_threshold | Pass threshold % |
+
+### `course_assessments` — Assessment Templates per Course
+Same columns as `assessments` but with `course_id` instead of `tqf3_id`.
+
+---
+
+### `teaching_plan` — Weekly Teaching Plan (TQF3 snapshot)
+| Column | Description |
+|--------|-------------|
+| tqf3_id FK | |
+| week | Week number |
+| week_label | Display label (e.g. "1-2") |
+| llo_text | Lesson-level learning outcome |
+| topic | Topic |
+| activities | Learning activities |
+| media | Teaching media/tools |
+| assessment_tools | Assessment evidence/method |
+| hours_planned | Planned hours |
+| hours_theory / hours_practice / hours_self | Detailed hour breakdown |
+| teaching_method | Teaching method |
+
+### `course_teaching_plan` — Teaching Plan Template per Course
+Same columns as `teaching_plan` but with `course_id` instead of `tqf3_id`.
+
+---
+
+### `course_resources` — Section 8 Resources per Course
+| Column | Description |
+|--------|-------------|
+| id | INTEGER PK |
+| course_id | INTEGER FK → courses.id |
+| resource_type | `textbook` / `article` / `website` / `media` |
+| citation_text | Full citation |
+| url | URL (if applicable) |
+| note | Additional note |
+
+---
+
+### `tqf5` — TQF5 Records (Teaching Results)
+| Column | Type | Description |
+|--------|------|-------------|
+| tqf3_id | INTEGER FK UNIQUE | → tqf3.id |
+| registered_count | INTEGER | |
+| remaining_count | INTEGER | |
+| withdrawn_count | INTEGER | |
+| grade_dist_json | TEXT | JSON {"A":4, "B+":3, ...} |
+| clo_results_json | TEXT | JSON CLO assessment results |
+| improvement_next | TEXT | Improvement plan for next semester |
+
+---
+
+### `student_grades` — Student Grade Records
+| Column | Type | Description |
+|--------|------|-------------|
 | tqf5_id | INTEGER FK | → tqf5.id |
-| student_id | TEXT | รหัสนักศึกษา |
+| student_id | TEXT | |
 | student_name | TEXT | |
-| section | TEXT | กลุ่มเรียน |
-| total_score | REAL | คะแนนรวม |
+| section | TEXT | Class section |
+| total_score | REAL | |
 | grade | TEXT | A/B+/B/C+/C/D+/D/E/W/I/P/U |
 | UNIQUE | | (tqf5_id, student_id) |
 
 ---
 
-### ตาราง `teaching_plan` — แผนการสอนรายสัปดาห์
-| column | คำอธิบาย |
-|--------|-----------|
-| tqf3_id FK | |
-| week | สัปดาห์ที่ |
-| topic | หัวข้อ |
-| hours_planned | ชั่วโมงตามแผน |
-
-### ตาราง `assessments` — แผนการประเมิน
-| column | คำอธิบาย |
-|--------|-----------|
-| tqf3_id FK | |
-| name | ชื่อการประเมิน (สอบกลางภาค ฯลฯ) |
-| weight_pct | น้ำหนัก % |
-| clo_mapping | JSON list of CLO numbers |
-
-### ตาราง `teaching_actual` — ชั่วโมงสอนจริง
-| column | คำอธิบาย |
-|--------|-----------|
-| tqf5_id FK | |
-| hours_planned / hours_actual | แผน vs จริง |
-| deviation_reason | เหตุผลที่เบี่ยงเบน |
-
----
-
-## ความสัมพันธ์ตาราง (ERD แบบย่อ)
+## ERD (abbreviated)
 
 ```
 curricula
    └── courses (curriculum_id)
+         ├── plos (curriculum_id)
+         ├── course_clos (course_id)
+         ├── course_assessments (course_id)
+         ├── course_teaching_plan (course_id)
+         ├── course_resources (course_id)
          └── tqf3 (course_id)
                ├── clos (tqf3_id)
                ├── teaching_plan (tqf3_id)
                ├── assessments (tqf3_id)
+               ├── tqf3_staff (tqf3_id)
                └── tqf5 (tqf3_id)
                      ├── student_grades (tqf5_id)
                      └── teaching_actual (tqf5_id)
@@ -151,182 +265,213 @@ curricula
 
 ---
 
-## ไฟล์หลักแต่ละตัว
+## Key Files
 
 ### `database.py`
-DB layer รวมศูนย์ ทุกไฟล์ `import database as db`
+Central DB layer — all other files do `import database as db`.
 
-**Functions สำคัญ:**
+**Key functions:**
 ```python
-db.init_db()                          # สร้าง schema
-db.upsert_curriculum(version, ...)    # เพิ่ม/อัปเดตหลักสูตร
-db.upsert_course(code, name_th, ..., curriculum_id)  # เพิ่ม/อัปเดตวิชา
-db.upsert_tqf3(course_id, semester, year, ...)       # เพิ่ม/อัปเดต มคอ.3
-db.replace_clos(tqf3_id, clos_list)   # บันทึก CLOs (ลบเก่า→เพิ่มใหม่)
-db.get_or_create_tqf5(tqf3_id)       # สร้าง มคอ.5 record
-db.replace_student_grades(tqf5_id, grades_list)      # บันทึกเกรดทั้งหมด
-db.compute_grade_stats(tqf5_id)       # คำนวณสถิติการกระจายเกรด
-db.get_dashboard_summary()            # ข้อมูลภาพรวมสำหรับ GUI
-db.export_to_excel(output_path)       # export → .xlsx (4 sheets)
+db.init_db()                          # Create/migrate schema
+db.upsert_curriculum(version, ...)
+db.upsert_course(code, name_th, ..., curriculum_id)
+db.upsert_course_offering(course_id, semester, year, ...)
+db.get_course_offerings(course_id=None, curriculum_id=None, semester=None, year=None)
+db.upsert_tqf3(course_id, semester, year, ...)
+db.replace_clos(tqf3_id, clos_list)
+db.get_or_create_tqf5(tqf3_id)
+db.replace_student_grades(tqf5_id, grades_list)
+db.compute_grade_stats(tqf5_id)
+db.get_dashboard_summary()
+db.export_to_excel(output_path)
+
+# v2 additions
+db.get_plos(curriculum_id)
+db.get_course_clos(course_id) / db.replace_course_clos(course_id, clos)
+db.get_course_assessments(course_id) / db.replace_course_assessments(...)
+db.get_course_teaching_plan(course_id) / db.replace_course_teaching_plan(...)
+db.get_course_resources(course_id) / db.replace_course_resources(...)
+db.get_tqf3_staff(tqf3_id) / db.replace_tqf3_staff(tqf3_id, staff_list)
+db.copy_course_template_to_tqf3(course_id, tqf3_id)
 ```
+
+---
+
+### `generate_tqf3.py`
+Generates TQF3 `.docx` by filling the Word template `templates/แบบฟอร์ม มคอ. 3.docx`.
+
+**Key functions:**
+```python
+load_data_for_tqf3(course_id=None, semester=None, year=None, tqf3_id=None) -> dict
+fill_tqf3(template_path, data, output_path) -> str
+generate_tqf3_docx(course_id=None, semester=None, year=None, output_path=None, tqf3_id=None) -> str
+```
+
+**Helper functions:**
+```python
+_replace_block_between(doc, intro_predicate, end_predicate, lines)
+    # Finds paragraph range by predicate, removes existing, inserts new lines via addnext
+_find_paragraph_index(doc, predicate) -> int
+_is_valid_instructor_name(name) -> bool
+    # Returns False if name starts with appendix keywords (ภาคผนวก, แบบประเมิน, เกณฑ์การให้คะแนน, ...)
+_build_objective_lines(clos, plo_lookup) -> list[str]
+_build_plo_rows(plos, clos, assessments) -> list[tuple]
+_hours_summary(course, teaching_plan) -> list[str]
+```
+
+**Data loading priority:**
+1. `tqf3_staff` table → if empty, fall back to `instructors_json`/`instructor_main` from tqf3 row (filtered)
+2. `clos` table for tqf3_id → if empty, fall back to `course_clos`
+3. `assessments` table for tqf3_id → if empty, fall back to `course_assessments`
+4. `teaching_plan` table for tqf3_id → if empty, fall back to `course_teaching_plan`
+5. `course_resources` always loaded from course level
+
+**Template structure (แบบฟอร์ม มคอ. 3.docx):**
+- 69 body-level paragraphs, 6 tables
+- Tables filled: Table0=header, Table1=PLO/CLO mapping, Table2=teaching plan, Table3=hours summary, Table4=assessments, Table5=grade scale
+- Paragraph blocks replaced: CLOs (section 5.1), resources (section 8), staff (sections 9.1, 9.2)
 
 ---
 
 ### `import_tqf3.py`
-Parse ไฟล์มคอ.3 (.docx) แล้ว insert เข้า DB
+Parses TQF3 `.docx` files and inserts into DB.
 
-**ขั้นตอน:**
-1. `ensure_docx()` — แปลง .doc/.rtf → .docx ผ่าน LibreOffice (ถ้าจำเป็น)
-2. อ่าน sections จาก heading ของ Word document
-3. ดึงข้อมูล: ชื่อวิชา, รหัส, ภาค/ปี, CLOs (ส่วนที่ 4), อาจารย์ (ส่วนที่ 9.2)
-4. เรียก `db.upsert_course()` + `db.upsert_tqf3()` + `db.replace_clos()`
-
-**รูปแบบชื่อไฟล์ที่รองรับ:**
-- `tqf3 calculus1.docx`, `tqf3 complex 60.docx`, ฯลฯ
+Steps:
+1. `ensure_docx()` — convert `.doc`/`.rtf` → `.docx` via LibreOffice if needed
+2. Read sections from Word document headings
+3. Extract: course name, code, semester/year, CLOs (section 5), instructors (section 9.2)
+4. Call `db.upsert_course()` + `db.upsert_tqf3()` + `db.replace_clos()`
 
 ---
 
 ### `import_grades.py`
-Parse ไฟล์เกรด (.doc/.rtf/.docx) แล้ว insert เข้า DB
+Parses grade files `.doc`/`.rtf`/`.docx` and inserts into DB.
 
-**ขั้นตอน:**
-1. `extract_course_info_from_file()` — อ่าน header หารหัสวิชา + ภาค/ปี ด้วย regex
-   - รหัสวิชา: pattern `[A-Z]{2,6}\d{3,6}` เช่น SMAC001, SMA0901
-   - ภาค/ปี: pattern `\d/\d{4}` เช่น 1/2567
-2. `parse_rtf_tables()` — parse ตารางจาก .doc/.rtf แบบ native (ไม่ต้อง LibreOffice)
-   - split ด้วย `\cell` และ `\row` markers
-   - decode hex escape `\'XX` เป็น cp874 (Thai encoding)
-3. `parse_grade_docx()` — อ่านตารางเกรด หา student_id, ชื่อ, คะแนน, เกรด
-4. ถ้าไม่พบวิชาใน DB → สร้าง empty course + tqf3 record อัตโนมัติ
-5. เรียก `db.replace_student_grades()` + `db.update_tqf5()`
-
-**รูปแบบตารางเกรดที่รองรับ:**
-- คอลัมน์: ลำดับ | รหัสนักศึกษา | ชื่อ-สกุล | [คะแนนต่างๆ] | เกรด
+Steps:
+1. `extract_course_info_from_file()` — regex-extract course code + semester/year from header
+   - Course code pattern: `[A-Z]{2,6}\d{3,6}` e.g. SMAC001, SMA0901
+   - Semester/year pattern: `\d/\d{4}` e.g. 1/2567
+2. `parse_rtf_tables()` — native RTF table parser (no LibreOffice needed)
+   - Splits on `\cell` and `\row` markers, decodes hex escapes `\'XX` as cp874 (Thai)
+3. `parse_grade_docx()` — reads grade table, extracts student_id, name, score, grade
+4. If course not found in DB → create empty course + tqf3 record automatically
+5. Call `db.replace_student_grades()` + `db.update_tqf5()`
 
 ---
 
 ### `input_gui.py`
-GUI หลักด้วย tkinter
+Main tkinter GUI.
 
-**โครงสร้าง:**
+**Structure:**
 ```
 TQFApp (tk.Tk)
-├── Header bar (ชื่อระบบ + ปุ่ม Export Excel)
-├── Tab 1: "รายวิชาในระบบ"
-│    └── Treeview ตารางวิชา (code, ชื่อ, ภาค/ปี, มคอ.3, เกรด, นักศึกษา, สถานะ)
-│         color tags: complete=เขียว, partial=เหลือง, gradeonly=ส้ม
-└── Tab 2: "นำเข้าข้อมูล"
-     ├── Card: นำเข้า มคอ.3 (รับ .docx)
-     ├── Card: นำเข้าเกรด (รับ .doc/.rtf/.docx)
-     └── Log box (dark bg, แสดง output)
+├── Header bar (system name + Export Excel button)
+├── Tab 1: "รายวิชาในระบบ" (Courses in system)
+│    └── Treeview: code, name, semester/year, TQF3, grades, students, status
+│         color tags: complete=green, partial=yellow, gradeonly=orange
+├── Tab 2: "ฐานข้อมูลหลักสูตร" (Curriculum database)
+│    ├── Manage courses / PLOs / CLOs / Assessment templates / Teaching plan / Resources
+│    └── Button "สร้าง มคอ.3" → opens TQF3GenerateDialog
+└── Tab 3: "นำเข้าข้อมูล" (Import data)
+     ├── Card: Import TQF3 (.docx)
+     ├── Card: Import grades (.doc/.rtf/.docx)
+     └── Log box (dark bg, shows output)
 ```
-
-**GradeInfoDialog:** dialog ยืนยัน/แก้ไข course_code + semester/year
-- ✅ = ตรวจพบอัตโนมัติ, ⚠️ = ตรวจไม่พบ (ให้กรอกเอง)
 
 ---
 
 ### `generate_tqf5.py`
-สร้างไฟล์มคอ.5 .docx จาก template
+Generates TQF5 `.docx` from template.
 
-**ฟังก์ชัน:**
 ```python
 generate_tqf5(tqf3_id, output_path)
 ```
-- อ่านข้อมูล tqf3 + tqf5 + student_grades จาก DB
-- เติมข้อมูลลง template Word (`แบบฟอร์ม มคอ. 5.docx`)
-- ส่งออกเป็นไฟล์ใหม่
+
+Reads tqf3 + tqf5 + student_grades from DB and fills `แบบฟอร์ม มคอ. 5.docx`.
 
 ---
 
-## วิธีใช้งาน
+## How to Use
 
-### เปิด GUI (แนะนำ)
+### Open GUI (recommended)
 ```
-ดับเบิลคลิก: นำเข้าข้อมูล.bat
+Double-click: นำเข้าข้อมูล.bat
 ```
 
 ### Export Excel
 ```
-ดับเบิลคลิก: export_excel.bat
-→ สร้าง tqf_database_view.xlsx (4 sheets)
-   - ภาพรวมรายวิชา
+Double-click: export_excel.bat
+→ Creates tqf_database_view.xlsx (4 sheets):
+   - Course overview
    - CLOs
-   - การกระจายเกรด
-   - รายชื่อนักศึกษา
+   - Grade distribution
+   - Student list
 ```
 
-### เปิด Streamlit web app
+### Open Streamlit web app
 ```
-ดับเบิลคลิก: start.bat
-→ เปิด browser ที่ http://localhost:8501
+Double-click: start.bat
+→ Opens browser at http://localhost:8501
 ```
 
-### ติดตั้ง dependencies (ครั้งแรก)
+### Install dependencies (first time)
 ```bash
 pip install python-docx openpyxl streamlit pandas plotly
 ```
 
 ---
 
-## ข้อมูลหลักสูตรในระบบ
+## Curriculum Data in System
 
-### หลักสูตร 65 (curriculum_id=2) — 26 วิชา
-| กลุ่ม | วิชา |
-|-------|------|
-| วิชาแกน (7) | SPHC001, SCHC005, SBIC005, SMAC001, SMAC002, SMAC006, SMA2102 |
-| วิชาบังคับ (16) | SMA1003, SMA1004, SMA2101, SMA2201, SMA2202, SMA2301, SMA2302, SMA2303, SMA3004, SMA3005, SMA3007, SMA4001, SMA6001, SMA6002, SMA7001 + SMA0901 |
-| สหกิจศึกษา (3) | SMA5001, SMA5002, SMA5003 |
+### Curriculum 65 (curriculum_id=2) — 26 courses
+| Group | Courses |
+|-------|---------|
+| Core (7) | SPHC001, SCHC005, SBIC005, SMAC001, SMAC002, SMAC006, SMA2102 |
+| Required (16) | SMA1003, SMA1004, SMA2101, SMA2201, SMA2202, SMA2301, SMA2302, SMA2303, SMA3004, SMA3005, SMA3007, SMA4001, SMA6001, SMA6002, SMA7001, SMA0901 |
+| Co-op (3) | SMA5001, SMA5002, SMA5003 |
 
-### หลักสูตร 69 (curriculum_id=1) — 40 วิชา
-| กลุ่ม | วิชา |
-|-------|------|
-| วิชาแกน (7) | SCI0001, SCI0002, SCI0003, SMA0001, SMA0002, SMA0003, SMA0004 |
-| วิชาบังคับ (14) | ... |
-| วิชาเลือก (16) | ... |
-| สหกิจศึกษา (3) | ... |
+### Curriculum 69 (curriculum_id=1) — 40 courses
+| Group | Courses |
+|-------|---------|
+| Core (7) | SCI0001, SCI0002, SCI0003, SMA0001, SMA0002, SMA0003, SMA0004 |
+| Required (14) | (see DB) |
+| Elective (16) | (see DB) |
+| Co-op (3) | (see DB) |
 
 ---
 
 ## Known Issues / TODO
 
-- [ ] วิชาเลือกของหลักสูตร 65 ยังไม่ได้ import (ผู้ใช้ยังไม่ได้ให้ข้อมูล)
-- [ ] import_tqf3.py ใช้ LibreOffice สำหรับ .doc — ถ้าไม่มี LibreOffice จะ error (ต่างจาก import_grades.py ที่มี native RTF parser)
+## Agreed Next UI Refactor (2026-04-12)
+
+This is the agreed direction for the next implementation step. It is partially implemented now: the DB layer has `course_offerings`, and Tab 2 now has an initial term/offering panel, but the full offering-first refactor is still pending.
+
+- `Tab 1 = Curriculum Catalog`
+- Holds long-lived master/template data: curricula, courses, PLOs, default CLOs, default assessment templates, default teaching plan, default resources
+- `Tab 2 = Term Offerings`
+- Holds courses actually opened in a selected semester/year, backed by `course_offerings`
+- Term-specific actions should move to Tab 2: generate/open TQF3, edit TQF3 staff, section/special-section data, and later grades/TQF5
+- `times offered` should be counted from offering records, not from ad-hoc TQF3 generation rows
+- Tab 2 should support a "create offerings from catalog" flow: choose curriculum + semester + year, then select courses from the catalog to open for that term
+
+
+- [ ] If the TQF3 Word template is modified in the future, re-verify paragraph indices and table cell mapping in `generate_tqf3.py`
+- [ ] Elective courses for curriculum 65 not yet imported (user has not provided data)
+- [ ] `import_tqf3.py` requires LibreOffice for `.doc` — `import_grades.py` has native RTF parser (no dependency)
+- [ ] Semester offering manager UI is only partially implemented; Tab 2 has term filters + offering actions now, but the bulk "create offerings from catalog" flow is still missing
+- [ ] Dynamic section picker from declared offerings not yet implemented (`N01-N09` / `P01-P09` still fixed-order choices)
+- [ ] The next agreed refactor slice is to finish turning the current mixed Tab 2 into `Term Offerings`, backed by `course_offerings`
 
 ---
 
-## แผนพัฒนา v2 (ROADMAP_v2.md)
+## Development Plan v2 (see ROADMAP_v2.md)
+Current roadmap status:
+- `F1` through `F5` are done
+- `F6` (`course_offerings` DB foundation) is now done
+- `F7` (Tab 2 offering manager UI) is partially landed and remains the active next step
 
-ดูรายละเอียดทั้งหมดใน `ROADMAP_v2.md` — สรุปย่อ:
-
-### F1: Course Catalog Tab
-- เพิ่ม Tab 3 "หลักสูตร & รายวิชา" ใน GUI
-- แสดงรายวิชาทั้งหมดของหลักสูตร พร้อมรายละเอียดเต็ม
-- รองรับ add/edit/delete วิชาจาก GUI
-
-### F2: เพิ่มวิชาโดยไม่ต้องใช้มคอ.3
-- `CourseAddDialog` — form กรอกข้อมูลวิชาใหม่
-- `import_courses_excel.py` — bulk import จาก Excel template
-- เพิ่มตาราง **`course_clos`** — CLO มาตรฐานระดับวิชา (แยกจาก CLO ใน tqf3 แต่ละปี)
-
-### F3: สร้างมคอ.3 จาก DB (เลือกปีได้)
-- `generate_tqf3.py` — สร้างไฟล์ Word มคอ.3 จาก template
-- `TQF3GenerateDialog` — เลือกวิชา/ปี/ภาค/อาจารย์ แล้ว pre-fill CLO จาก DB
-- **รอ template มคอ.3 แบบละเอียด** ก่อนพัฒนา (อาจต้องเพิ่ม schema: textbooks, plo_definitions, graduate_attributes)
-
-### Schema ที่จะเพิ่ม (ยืนยันบางส่วน รอ template)
-| ตาราง | สถานะ |
-|-------|--------|
-| `course_clos` | ✅ ยืนยันแล้ว — จำเป็นสำหรับ F2+F3 |
-| `textbooks` | ⏳ รอดู template หมวด 6 |
-| `plo_definitions` | ⏳ รอดู template หมวด 4 |
-| `graduate_attributes` | ⏳ รอดู template หมวด 4 |
-
----
-
-## Notes สำคัญ
-
-- **DB path**: `database.py` ใช้ `os.path.dirname(__file__)` → DB อยู่ข้างๆ script เสมอ
-- **UNIQUE constraint**: `courses` ใช้ `UNIQUE(code, curriculum_id)` → วิชาเดียวกันอยู่ได้หลายหลักสูตร
-- **JSON fields**: `instructors_json`, `grade_dist_json`, `clo_results_json` เก็บเป็น TEXT ต้อง `json.loads()` ก่อนใช้
-- **Encoding**: ไฟล์เกรด .doc/.rtf ไทยใช้ cp874 → `parse_rtf_tables()` decode ด้วย cp874 ก่อน
+### F1: Course Catalog Tab ✅ Done
+### F2: Add courses without TQF3 ✅ Done
+### F3: Generate TQF3 from DB ✅ Done (template-fill approach)
+### F4: Teaching plan + resources editors — Done
+### F5: TQF3 staff editor — Done
