@@ -6,9 +6,20 @@
 ---
 
 ## 🟢 Latest Status
-Updated: 2026-04-13 (session 3)  |  Machine: PC  |  Tool: Codex
+Updated: 2026-04-13 (session 5)  |  Machine: PC  |  Tool: Codex
 
 ### Completed this session
+- [x] Reviewed popup dialogs for hidden `เพิ่ม...` actions and normalized crowded toolbars with a shared wrapped-action helper in `input_gui.py`
+- [x] Applied wrapped popup action rows to `PLO`, `CLO`, `Assessment`, `แผนการสอนรายสัปดาห์`, `ทรัพยากร`, and `บุคลากร มคอ.3` manager dialogs so add buttons remain visible on narrower windows
+- [x] Added regression construction coverage for `CourseResourcesDialog` and `TQF3StaffDialog`
+- [x] Re-ran `tests.test_regressions` -> OK (20 tests)
+- [x] Fixed Term Offerings delete flow: offerings in `1/69` can now be removed even when they already have linked `มคอ.3` data
+- [x] Added DB helper `delete_course_offering()` to remove the offering plus its linked `tqf3` snapshot safely in one transaction
+- [x] Re-enabled the Tab 2 delete action for any selected offering and added a stronger confirmation when `มคอ.3` will also be deleted
+- [x] Added a second prominent add-offering button in the offering panel so `เพิ่มวิชาจากหลักสูตรไปยังเทอมนี้` is visible even when the top filter row is crowded
+- [x] Updated catalog-selection state handling so both add-offering buttons enable/disable together
+- [x] Added regression coverage for linked-offering deletion and the visible add-offering button state
+- [x] Re-ran `tests.test_regressions` -> OK (18 tests)
 - [x] Added explicit routine git command guidance to `RULES.md` and `CODEX_CONTEXT.md`
 - [x] Repaired `generate_tqf3.py` after a broken duplicated tail and made template lookup resilient to the real template file path
 - [x] Added/verified `tests/test_generate_tqf3.py` and re-ran generator + regression suites -> OK (19 tests)

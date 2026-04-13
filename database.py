@@ -619,6 +619,34 @@ def get_course_offerings(course_id=None, curriculum_id=None, semester=None, year
         return [dict(r) for r in rows]
 
 
+def delete_course_offering(offering_id, delete_linked_tqf3=False) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                o.id,
+                c.code,
+                o.section_code,
+                t.id AS tqf3_id
+            FROM course_offerings o
+            JOIN courses c ON c.id = o.course_id
+            LEFT JOIN tqf3 t ON t.offering_id = o.id
+            WHERE o.id=?
+            """,
+            (offering_id,),
+        ).fetchone()
+        if not row:
+            return False
+        if row["tqf3_id"] and not delete_linked_tqf3:
+            raise ValueError(
+                f"Offering {row['code']} {row['section_code']} has linked tqf3 data"
+            )
+        if row["tqf3_id"]:
+            conn.execute("DELETE FROM tqf3 WHERE id=?", (row["tqf3_id"],))
+        conn.execute("DELETE FROM course_offerings WHERE id=?", (offering_id,))
+        return True
+
+
 def upsert_tqf3(course_id, semester, year, instructor_main="",
                 instructors=None, location="", objectives="",
                 source_file="", is_special=0, offering_id=None,

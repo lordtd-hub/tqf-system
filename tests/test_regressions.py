@@ -25,6 +25,15 @@ class _FakeText:
         return self._value
 
 
+class _FakeButton:
+    def __init__(self):
+        self.state = None
+
+    def config(self, **kwargs):
+        if "state" in kwargs:
+            self.state = kwargs["state"]
+
+
 class _DummyDialog:
     def __init__(self):
         self.destroyed = False
@@ -233,6 +242,51 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(offering["section_code"], "P01")
         self.assertEqual(offering["is_special"], 1)
 
+    def test_delete_course_offering_can_remove_linked_tqf3_snapshot(self):
+        tmpdir = tempfile.mkdtemp()
+        temp_db = os.path.join(tmpdir, "offering_delete.db")
+        try:
+            original_path = db.DB_PATH
+            try:
+                db.DB_PATH = temp_db
+                db.init_db()
+                curriculum_id = db.upsert_curriculum("69", "Test Curriculum", 2569)
+                course_id = db.upsert_course("SMA1001", "Calculus 1", curriculum_id=curriculum_id)
+                offering_id = db.upsert_course_offering(course_id, 1, 2569, curriculum_id=curriculum_id)
+                tqf3_id = db.upsert_tqf3(course_id, 1, 2569, offering_id=offering_id)
+                db.replace_clos(
+                    tqf3_id,
+                    [
+                        {
+                            "clo_number": 1,
+                            "description": "Test CLO",
+                            "plo_mapping": [1],
+                        }
+                    ],
+                )
+                db.delete_course_offering(offering_id, delete_linked_tqf3=True)
+                with sqlite3.connect(temp_db) as verify_conn:
+                    offering = verify_conn.execute(
+                        "SELECT id FROM course_offerings WHERE id=?",
+                        (offering_id,),
+                    ).fetchone()
+                    tqf3_row = verify_conn.execute(
+                        "SELECT id FROM tqf3 WHERE id=?",
+                        (tqf3_id,),
+                    ).fetchone()
+                    clo_count = verify_conn.execute(
+                        "SELECT COUNT(*) FROM clos WHERE tqf3_id=?",
+                        (tqf3_id,),
+                    ).fetchone()[0]
+            finally:
+                db.DB_PATH = original_path
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        self.assertIsNone(offering)
+        self.assertIsNone(tqf3_row)
+        self.assertEqual(clo_count, 0)
+
     def test_course_offering_dialog_confirm_builds_normalized_result(self):
         dialog = _DummyDialog()
         dialog.sem_var = _FakeVar("2")
@@ -269,6 +323,34 @@ class RegressionTests(unittest.TestCase):
         self.assertTrue(input_gui._offering_matches_search(row, "แคล"))
         self.assertTrue(input_gui._offering_matches_search(row, "N01"))
         self.assertFalse(input_gui._offering_matches_search(row, "P01"))
+
+    def test_catalog_select_updates_visible_add_offering_button(self):
+        class _CatalogStub:
+            def __init__(self):
+                self.btn_cat_edit = _FakeButton()
+                self.btn_cat_del = _FakeButton()
+                self.btn_cat_clo = _FakeButton()
+                self.btn_cat_plan = _FakeButton()
+                self.btn_cat_gen3 = _FakeButton()
+                self.btn_cat_res = _FakeButton()
+                self.btn_cat_staff = _FakeButton()
+                self.btn_cat_add_offering = _FakeButton()
+                self.btn_cat_add_offering_visible = _FakeButton()
+                self.cat_tree = self
+                self.cleared = False
+
+            def selection(self):
+                return []
+
+            def _clear_cat_detail(self):
+                self.cleared = True
+
+        stub = _CatalogStub()
+        input_gui.TQFApp._on_catalog_select(stub)
+
+        self.assertEqual(stub.btn_cat_add_offering.state, "disabled")
+        self.assertEqual(stub.btn_cat_add_offering_visible.state, "disabled")
+        self.assertTrue(stub.cleared)
 
     def test_plo_editor_ok_preserves_custom_plo_code(self):
         dialog = _DummyDialog()
@@ -471,6 +553,34 @@ class RegressionTests(unittest.TestCase):
                     }],
                 )
                 self.assertEqual(len(dialog._rows), 1)
+                dialog.destroy()
+        finally:
+            root.destroy()
+
+    def test_course_resources_dialog_can_be_constructed(self):
+        root = input_gui.tk.Tk()
+        root.withdraw()
+        try:
+            with patch.object(input_gui.CourseResourcesDialog, "wait_window", lambda self: None):
+                dialog = input_gui.CourseResourcesDialog(
+                    root,
+                    {"code": "MAT999", "name_th": "วิชาทดสอบ"},
+                    [],
+                )
+                dialog.destroy()
+        finally:
+            root.destroy()
+
+    def test_tqf3_staff_dialog_can_be_constructed(self):
+        root = input_gui.tk.Tk()
+        root.withdraw()
+        try:
+            with patch.object(input_gui.TQF3StaffDialog, "wait_window", lambda self: None):
+                dialog = input_gui.TQF3StaffDialog(
+                    root,
+                    {"code": "MAT999", "name_th": "วิชาทดสอบ"},
+                    [{"id": 1, "semester": 1, "year": 2569, "is_special": 0}],
+                )
                 dialog.destroy()
         finally:
             root.destroy()

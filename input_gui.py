@@ -87,6 +87,35 @@ def _build_wrapped_checklist(
     return vars_map
 
 
+def _build_wrapped_action_bar(parent, *, buttons, bg=BG, columns=3, pack_kwargs=None):
+    """Render a compact multi-row button bar for crowded popup actions."""
+    frame = tk.Frame(parent, bg=bg)
+    frame.pack(fill="x", **(pack_kwargs or {}))
+    created = {}
+    for idx, spec in enumerate(buttons):
+        row = idx // columns
+        col = idx % columns
+        btn = tk.Button(
+            frame,
+            text=spec["text"],
+            bg=spec.get("bg", BLUE),
+            fg=spec.get("fg", WHITE),
+            font=spec.get("font", FONT_B),
+            relief="flat",
+            padx=spec.get("padx", 10),
+            pady=spec.get("pady", 3),
+            cursor=spec.get("cursor", "hand2"),
+            state=spec.get("state", "normal"),
+            command=spec.get("command"),
+        )
+        btn.grid(row=row, column=col, sticky="ew", padx=4, pady=3)
+        frame.grid_columnconfigure(col, weight=1)
+        key = spec.get("key")
+        if key:
+            created[key] = btn
+    return frame, created
+
+
 def _offering_matches_search(row, raw_query):
     query = (raw_query or "").strip().lower()
     if not query:
@@ -845,6 +874,23 @@ class TQFApp(tk.Tk):
         offering_frame = tk.Frame(left, bg=BG)
         left_split.add(offering_frame, minsize=170, stretch="always")
 
+        offering_action_row = tk.Frame(offering_frame, bg=BG)
+        offering_action_row.pack(fill="x", pady=(0, 4))
+        self.btn_cat_add_offering_visible = tk.Button(
+            offering_action_row,
+            text="เพิ่มวิชาจากหลักสูตรไปยังเทอมนี้",
+            bg=GREEN,
+            fg=WHITE,
+            font=FONT_B,
+            relief="flat",
+            padx=12,
+            pady=4,
+            cursor="hand2",
+            state="disabled",
+            command=self._add_course_offering,
+        )
+        self.btn_cat_add_offering_visible.pack(side="right")
+
         tk.Label(
             offering_frame, text="รายวิชาที่เปิดสอน", bg=BG,
             fg=BLUE_DARK, font=FONT_B, anchor="w"
@@ -950,7 +996,7 @@ class TQFApp(tk.Tk):
         self.btn_cat_del_offering = tk.Button(
             context_buttons, text="ลบการเปิดสอน", bg=RED, fg=WHITE,
             font=FONT_B, relief="flat", padx=10, pady=4,
-            cursor="hand2", state="disabled", command=self._delete_course_offering
+            cursor="hand2", state="disabled", command=self._delete_course_offering_v2
         )
         self.btn_cat_del_offering.pack(side="left")
 
@@ -1183,6 +1229,8 @@ class TQFApp(tk.Tk):
         self.btn_cat_res.config(state=state)
         self.btn_cat_staff.config(state=state)
         self.btn_cat_add_offering.config(state=state)
+        if hasattr(self, "btn_cat_add_offering_visible"):
+            self.btn_cat_add_offering_visible.config(state=state)
         if not sel:
             self._clear_cat_detail()
             return
@@ -1199,7 +1247,7 @@ class TQFApp(tk.Tk):
             state="normal" if has_offering and offering.get("tqf3_id") else "disabled"
         )
         self.btn_cat_del_offering.config(
-            state="normal" if has_offering and not offering.get("tqf3_id") else "disabled"
+            state="normal" if has_offering else "disabled"
         )
         if not offering:
             if hasattr(self, "cat_offering_context_var"):
@@ -1736,6 +1784,39 @@ class TQFApp(tk.Tk):
                 conn.execute("DELETE FROM course_offerings WHERE id=?", (offering["offering_id"],))
             self._refresh_catalog_offerings()
             self._refresh_courses()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ลบการเปิดสอนไม่สำเร็จ: {e}", parent=self)
+
+    def _delete_course_offering_v2(self):
+        offering = self._selected_catalog_offering()
+        if not offering:
+            return
+
+        has_tqf3 = bool(offering.get("tqf3_id"))
+        if has_tqf3:
+            confirm_title = "ยืนยันการลบการเปิดสอนและ มคอ.3"
+            confirm_message = (
+                f"ต้องการลบการเปิดสอน {offering['code']} {offering['section_code']} ใช่หรือไม่?\n\n"
+                "รายการนี้มีข้อมูล มคอ.3 แล้ว หากยืนยัน ระบบจะลบข้อมูล มคอ.3 และข้อมูลที่เกี่ยวข้องของการเปิดสอนนี้ด้วย"
+            )
+        else:
+            confirm_title = "ยืนยันการลบการเปิดสอน"
+            confirm_message = (
+                f"ต้องการลบการเปิดสอน {offering['code']} {offering['section_code']} ใช่หรือไม่?"
+            )
+
+        if not messagebox.askyesno(confirm_title, confirm_message, parent=self):
+            return
+
+        try:
+            import database as db; db.init_db()
+            db.delete_course_offering(
+                offering["offering_id"],
+                delete_linked_tqf3=has_tqf3,
+            )
+            self._refresh_catalog_offerings()
+            self._refresh_courses()
+            self._clear_catalog_offering_selection()
         except Exception as e:
             messagebox.showerror("ข้อผิดพลาด", f"ลบการเปิดสอนไม่สำเร็จ: {e}", parent=self)
 
@@ -2807,16 +2888,16 @@ class PLOManagerDialog(tk.Toplevel):
                  side="left", padx=4, pady=10)
 
         # Toolbar
-        bar = tk.Frame(self, bg=BG)
-        bar.pack(fill="x", padx=12, pady=(8, 4))
-        tk.Button(bar, text="＋ เพิ่ม PLO", bg=GREEN, fg=WHITE, font=FONT_B,
-                  relief="flat", padx=10, pady=3, cursor="hand2",
-                  command=self._add_row).pack(side="left", padx=(0, 6))
-        self.btn_del_plo = tk.Button(
-            bar, text="🗑 ลบ", bg=RED, fg=WHITE, font=FONT_B,
-            relief="flat", padx=10, pady=3, cursor="hand2",
-            state="disabled", command=self._del_row)
-        self.btn_del_plo.pack(side="left")
+        _, plo_buttons = _build_wrapped_action_bar(
+            self,
+            buttons=[
+                {"text": "＋ เพิ่ม PLO", "bg": GREEN, "command": self._add_row},
+                {"key": "delete", "text": "🗑 ลบ", "bg": RED, "state": "disabled", "command": self._del_row},
+            ],
+            columns=2,
+            pack_kwargs={"padx": 12, "pady": (8, 4)},
+        )
+        self.btn_del_plo = plo_buttons["delete"]
 
         # Treeview
         tree_frame = tk.Frame(self, bg=BG)
@@ -3026,18 +3107,18 @@ class CourseCLOEditor(tk.Toplevel):
 
     # ── CLO tab ─────────────────────────────────────
     def _build_clo_tab(self):
-        bar = tk.Frame(self.tab_clo, bg=BG)
-        bar.pack(fill="x", padx=8, pady=(8,4))
-        tk.Button(bar, text="＋ เพิ่ม CLO", bg=GREEN, fg=WHITE, font=FONT_B,
-                  relief="flat", padx=10, pady=3, cursor="hand2",
-                  command=self._add_clo).pack(side="left", padx=(0,6))
-        self.btn_del_clo = tk.Button(
-            bar, text="🗑 ลบ", bg=RED, fg=WHITE, font=FONT_B,
-            relief="flat", padx=10, pady=3, cursor="hand2",
-            state="disabled", command=self._del_clo)
-        self.btn_del_clo.pack(side="left")
-        tk.Label(bar, text="(ดับเบิลคลิกเพื่อแก้ไข)",
-                 bg=BG, fg=GRAY, font=("Arial",8,"italic")).pack(side="left", padx=8)
+        _, clo_buttons = _build_wrapped_action_bar(
+            self.tab_clo,
+            buttons=[
+                {"text": "＋ เพิ่ม CLO", "bg": GREEN, "command": self._add_clo},
+                {"key": "delete", "text": "🗑 ลบ", "bg": RED, "state": "disabled", "command": self._del_clo},
+            ],
+            columns=2,
+            pack_kwargs={"padx": 8, "pady": (8, 2)},
+        )
+        self.btn_del_clo = clo_buttons["delete"]
+        tk.Label(self.tab_clo, text="(ดับเบิลคลิกเพื่อแก้ไข)",
+                 bg=BG, fg=GRAY, font=("Arial",8,"italic")).pack(anchor="w", padx=12, pady=(0, 4))
 
         tf = tk.Frame(self.tab_clo, bg=BG)
         tf.pack(fill="both", expand=True, padx=8, pady=4)
@@ -3112,19 +3193,19 @@ class CourseCLOEditor(tk.Toplevel):
 
     # ── Assessment tab ───────────────────────────────
     def _build_asmt_tab(self):
-        bar = tk.Frame(self.tab_asmt, bg=BG)
-        bar.pack(fill="x", padx=8, pady=(8,4))
-        tk.Button(bar, text="＋ เพิ่มรายการ", bg=GREEN, fg=WHITE, font=FONT_B,
-                  relief="flat", padx=10, pady=3, cursor="hand2",
-                  command=self._add_asmt).pack(side="left", padx=(0,6))
-        self.btn_del_asmt = tk.Button(
-            bar, text="🗑 ลบ", bg=RED, fg=WHITE, font=FONT_B,
-            relief="flat", padx=10, pady=3, cursor="hand2",
-            state="disabled", command=self._del_asmt)
-        self.btn_del_asmt.pack(side="left")
+        _, asmt_buttons = _build_wrapped_action_bar(
+            self.tab_asmt,
+            buttons=[
+                {"text": "＋ เพิ่มรายการ", "bg": GREEN, "command": self._add_asmt},
+                {"key": "delete", "text": "🗑 ลบ", "bg": RED, "state": "disabled", "command": self._del_asmt},
+            ],
+            columns=2,
+            pack_kwargs={"padx": 8, "pady": (8, 2)},
+        )
+        self.btn_del_asmt = asmt_buttons["delete"]
         self.asmt_total_var = tk.StringVar(value="")
-        tk.Label(bar, textvariable=self.asmt_total_var,
-                 bg=BG, fg=GRAY, font=FONT_SM).pack(side="left", padx=12)
+        tk.Label(self.tab_asmt, textvariable=self.asmt_total_var,
+                 bg=BG, fg=GRAY, font=FONT_SM).pack(anchor="w", padx=12, pady=(0, 4))
 
         tf = tk.Frame(self.tab_asmt, bg=BG)
         tf.pack(fill="both", expand=True, padx=8, pady=4)
@@ -3657,6 +3738,20 @@ class CourseTeachingPlanDialog(tk.Toplevel):
         tk.Button(tb, text="โ“", font=FONT_B, relief="flat", padx=8, pady=3,
                   command=self._move_down).pack(side="left")
 
+        _build_wrapped_action_bar(
+            self,
+            buttons=[
+                {"text": "+ เพิ่มแถว", "bg": GREEN, "command": self._add_row},
+                {"text": "แก้ไข", "bg": BLUE, "command": self._edit_row},
+                {"text": "ลบ", "bg": RED, "command": self._del_row},
+                {"text": "↑", "bg": WHITE, "fg": FG, "command": self._move_up},
+                {"text": "↓", "bg": WHITE, "fg": FG, "command": self._move_down},
+            ],
+            columns=3,
+            pack_kwargs={"padx": 10, "pady": (6, 2)},
+        )
+        tb.destroy()
+
         cols = ("no", "week", "llo", "topic", "hours")
         self.tree = ttk.Treeview(self, columns=cols, show="headings",
                                  selectmode="browse", height=15)
@@ -3933,6 +4028,20 @@ class CourseResourcesDialog(tk.Toplevel):
         tk.Button(tb, text="↓", font=FONT_B, relief="flat", padx=8, pady=3,
                   command=self._move_down).pack(side="left")
 
+        _build_wrapped_action_bar(
+            self,
+            buttons=[
+                {"text": "+ เพิ่มรายการ", "bg": GREEN, "command": self._add_row},
+                {"text": "แก้ไข", "bg": BLUE, "command": self._edit_row},
+                {"text": "ลบ", "bg": RED, "command": self._del_row},
+                {"text": "↑", "bg": WHITE, "fg": FG, "command": self._move_up},
+                {"text": "↓", "bg": WHITE, "fg": FG, "command": self._move_down},
+            ],
+            columns=3,
+            pack_kwargs={"padx": 10, "pady": (6, 2)},
+        )
+        tb.destroy()
+
         cols = ("no", "type", "citation", "url")
         self.tree = ttk.Treeview(self, columns=cols, show="headings",
                                  selectmode="browse", height=14)
@@ -4135,6 +4244,20 @@ class TQF3StaffDialog(tk.Toplevel):
                   command=self._move_up).pack(side="left", padx=(0, 2))
         tk.Button(tb, text="↓", font=FONT_B, relief="flat", padx=8, pady=3,
                   command=self._move_down).pack(side="left")
+
+        _build_wrapped_action_bar(
+            self,
+            buttons=[
+                {"text": "+ เพิ่มบุคลากร", "bg": GREEN, "command": self._add_person},
+                {"text": "แก้ไข", "bg": BLUE, "command": self._edit_person},
+                {"text": "ลบ", "bg": RED, "command": self._del_person},
+                {"text": "↑", "bg": WHITE, "fg": FG, "command": self._move_up},
+                {"text": "↓", "bg": WHITE, "fg": FG, "command": self._move_down},
+            ],
+            columns=3,
+            pack_kwargs={"padx": 10, "pady": (4, 2)},
+        )
+        tb.destroy()
 
         cols = ("seq", "role", "name")
         self.tree = ttk.Treeview(self, columns=cols, show="headings",
