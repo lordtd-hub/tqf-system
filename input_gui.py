@@ -9,6 +9,34 @@ import sys, os, sqlite3, json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# ── Windows DPI awareness (ต้องทำก่อน tk.Tk() เสมอ) ──────────────
+try:
+    from ctypes import windll
+    windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
+
+# ── Global fix: ทุก Toplevel dialog auto-size ตาม content ──────────
+_orig_wait_window = tk.Toplevel.wait_window
+
+
+def _autosize_wait_window(self, window=None):
+    """Auto-expand dialog height to fit content before blocking."""
+    try:
+        self.update_idletasks()
+        req_h = self.winfo_reqheight()
+        cur_h = self.winfo_height()
+        if req_h > cur_h:
+            cur_w = self.winfo_width() or self.winfo_reqwidth()
+            self.geometry(f"{cur_w}x{req_h}")
+            self.update_idletasks()
+    except Exception:
+        pass
+    _orig_wait_window(self, window)
+
+
+tk.Toplevel.wait_window = _autosize_wait_window
+
 # ══════════════════════════════════════════════════════
 # STYLES
 # ══════════════════════════════════════════════════════
@@ -26,6 +54,80 @@ FONT      = ("Arial", 10)
 FONT_B    = ("Arial", 10, "bold")
 FONT_SM   = ("Arial", 9)
 FONT_H    = ("Arial", 12, "bold")
+
+
+# ══════════════════════════════════════════════════════
+# SCROLLABLE BODY — ใช้ใน dialog ที่มี content เยอะ
+# ══════════════════════════════════════════════════════
+class _ScrollableBody(tk.Frame):
+    """
+    Frame ที่มี Canvas + Scrollbar แนวตั้ง พร้อม mousewheel support.
+    ใส่ widget ลงใน self.inner แทน parent โดยตรง
+    ปุ่ม OK/Cancel ควร pack ลงใน Toplevel โดยตรง (ไม่ใช่ใน _ScrollableBody)
+    เพื่อให้ปุ่มอยู่ด้านล่างเสมอและไม่ถูก scroll ไป
+    """
+
+    def __init__(self, parent, bg=BG, **kw):
+        super().__init__(parent, bg=bg, **kw)
+        self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self._vsb = ttk.Scrollbar(self, orient="vertical",
+                                   command=self._canvas.yview)
+        self.inner = tk.Frame(self._canvas, bg=bg)
+
+        self._win_id = self._canvas.create_window(
+            (0, 0), window=self.inner, anchor="nw")
+
+        self.inner.bind("<Configure>", self._on_inner_config)
+        self._canvas.bind("<Configure>", self._on_canvas_config)
+        self._canvas.configure(yscrollcommand=self._vsb.set)
+
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self._vsb.pack(side="right", fill="y")
+
+        # mousewheel บน canvas และ inner frame
+        for w in (self._canvas, self.inner):
+            w.bind("<MouseWheel>", self._on_wheel)
+            w.bind("<Button-4>", self._on_wheel)   # Linux scroll up
+            w.bind("<Button-5>", self._on_wheel)   # Linux scroll down
+
+    def _on_inner_config(self, _e=None):
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_canvas_config(self, e):
+        self._canvas.itemconfigure(self._win_id, width=e.width)
+
+    def _on_wheel(self, e):
+        if e.num == 4:
+            self._canvas.yview_scroll(-1, "units")
+        elif e.num == 5:
+            self._canvas.yview_scroll(1, "units")
+        else:
+            self._canvas.yview_scroll(-1 * (e.delta // 120), "units")
+
+    def bind_mousewheel(self, widget):
+        """ผูก mousewheel event กับ widget ภายใน inner (เช่น Text, Combobox)."""
+        widget.bind("<MouseWheel>", self._on_wheel)
+
+
+def _dialog_btn_bar(parent, on_save, on_cancel,
+                    save_text="💾  บันทึก", cancel_text="ยกเลิก"):
+    """
+    สร้าง button bar ด้านล่าง dialog — pack side=bottom ก่อน content เสมอ
+    เพื่อให้ปุ่มไม่หายเมื่อ content ยาวเกิน window
+    """
+    bar = tk.Frame(parent, bg=BG, bd=0, relief="flat")
+    bar.pack(side="bottom", fill="x", pady=(8, 14), padx=16)
+    sep = tk.Frame(bar, bg="#D1D5DB", height=1)
+    sep.pack(fill="x", pady=(0, 10))
+    btn_row = tk.Frame(bar, bg=BG)
+    btn_row.pack()
+    tk.Button(btn_row, text=save_text, bg=BLUE, fg=WHITE, font=FONT_B,
+              relief="flat", padx=22, pady=7, cursor="hand2",
+              command=on_save).pack(side="left", padx=8)
+    tk.Button(btn_row, text=cancel_text, bg="#9CA3AF", fg=WHITE, font=FONT,
+              relief="flat", padx=16, pady=7, cursor="hand2",
+              command=on_cancel).pack(side="left", padx=4)
+    return bar
 
 
 def _build_wrapped_checklist(
@@ -2498,8 +2600,8 @@ class GradeInfoDialog(tk.Toplevel):
                  auto_info=None, is_special_detected=False):
         super().__init__(parent)
         self.title("ยืนยันข้อมูลรายวิชา")
-        self.geometry("400x390")
-        self.resizable(False, False)
+        self.minsize(400, 0)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -2586,13 +2688,13 @@ class GradeInfoDialog(tk.Toplevel):
 
 class CourseOfferingDialog(tk.Toplevel):
     SECTION_CHOICES = ["N01", "P01"]
-    STATUS_CHOICES = ["active", "planned"]
+    STATUS_LABELS = {"เปิดสอน": "active", "วางแผน": "planned"}
 
     def __init__(self, parent, course, semester_default="1", year_default="2569"):
         super().__init__(parent)
         self.title("เพิ่มการเปิดสอน")
-        self.geometry("420x270")
-        self.resizable(False, False)
+        self.resizable(False, True)
+        self.minsize(420, 100)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -2600,10 +2702,15 @@ class CourseOfferingDialog(tk.Toplevel):
         code = course["code"] if course else "?"
         name = course["name_th"] if course else ""
 
+        # Buttons first (side=bottom) — ปุ่มไม่หายไม่ว่า content จะยาวแค่ไหน
+        _dialog_btn_bar(self, self._confirm, self.destroy,
+                        save_text="บันทึก", cancel_text="ยกเลิก")
+
+        # Header
         tk.Label(
             self, text=f"{code}  {name}", bg=BG, fg=BLUE_DARK,
             font=FONT_B, wraplength=380
-        ).pack(padx=16, pady=(16, 6), anchor="w")
+        ).pack(padx=16, pady=(16, 4), anchor="w")
         tk.Label(
             self,
             text="กำหนดข้อมูลการเปิดสอนจริงของรายวิชานี้",
@@ -2611,7 +2718,7 @@ class CourseOfferingDialog(tk.Toplevel):
         ).pack(padx=16, anchor="w")
 
         form = tk.Frame(self, bg=BG)
-        form.pack(padx=16, pady=14, fill="x")
+        form.pack(padx=16, pady=12, fill="x")
 
         tk.Label(form, text="ภาคเรียน *", bg=BG, font=FONT_B).grid(row=0, column=0, sticky="w", pady=7)
         self.sem_var = tk.StringVar(value=str(semester_default or "1"))
@@ -2637,25 +2744,19 @@ class CourseOfferingDialog(tk.Toplevel):
         ).grid(row=2, column=1, sticky="w", padx=10)
 
         tk.Label(form, text="สถานะ", bg=BG, font=FONT_B).grid(row=3, column=0, sticky="w", pady=7)
-        self.status_var = tk.StringVar(value="active")
+        self.status_var = tk.StringVar(value="เปิดสอน")
         ttk.Combobox(
             form, textvariable=self.status_var,
-            values=self.STATUS_CHOICES,
+            values=list(self.STATUS_LABELS.keys()),
             width=10, state="readonly"
         ).grid(row=3, column=1, sticky="w", padx=10)
 
         tk.Label(
             form,
-            text="โหมดปัจจุบันรองรับอย่างปลอดภัย 1 ตอนปกติ (N01) และ 1 ตอนพิเศษ (P01) ต่อภาคเรียน",
+            text="รองรับ 1 ตอนปกติ (N01) และ 1 ตอนพิเศษ (P01) ต่อภาคเรียน",
             bg=BG, fg=GRAY, font=FONT_SM, wraplength=360, justify="left"
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 4))
 
-        btn_frame = tk.Frame(self, bg=BG)
-        btn_frame.pack(pady=12)
-        tk.Button(btn_frame, text="บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
-                  relief="flat", padx=20, pady=6, command=self._confirm).pack(side="left", padx=6)
-        tk.Button(btn_frame, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
-                  relief="flat", padx=16, pady=6, command=self.destroy).pack(side="left", padx=6)
         self.wait_window()
 
     def _confirm(self):
@@ -2676,7 +2777,7 @@ class CourseOfferingDialog(tk.Toplevel):
             "year": year,
             "section_code": section_code,
             "is_special": section_code.startswith("P"),
-            "status": self.status_var.get().strip() or "active",
+            "status": self.STATUS_LABELS.get(self.status_var.get(), "active"),
         }
         self.destroy()
 
@@ -2685,8 +2786,8 @@ class TQF3GenerateDialog(tk.Toplevel):
     def __init__(self, parent, course):
         super().__init__(parent)
         self.title("สร้าง มคอ.3")
-        self.geometry("420x250")
-        self.resizable(False, False)
+        self.minsize(420, 0)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -2764,8 +2865,8 @@ class CourseAddDialog(tk.Toplevel):
         super().__init__(parent)
         is_edit = existing is not None
         self.title("แก้ไขข้อมูลวิชา" if is_edit else "เพิ่มวิชาใหม่")
-        self.geometry("520x560")
-        self.resizable(False, False)
+        self.minsize(520, 400)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -2774,17 +2875,21 @@ class CourseAddDialog(tk.Toplevel):
         self._cur_map = {f"หลักสูตร {r['version']}  ({r['name_th']})": r["id"]
                          for r in curricula}
 
-        # Header
+        # Header (fixed — ไม่ scroll)
         hdr = tk.Frame(self, bg=BLUE_DARK)
-        hdr.pack(fill="x")
+        hdr.pack(fill="x", side="top")
         title_text = (f"✏️  {ex.get('code','')}  {ex.get('name_th','')}"
                       if is_edit else "＋  เพิ่มวิชาใหม่")
         tk.Label(hdr, text=title_text, bg=BLUE_DARK, fg=WHITE,
                  font=FONT_B, wraplength=480, anchor="w").pack(padx=14, pady=10)
 
-        # Form
-        frm = tk.Frame(self, bg=BG)
-        frm.pack(fill="both", expand=True, padx=20, pady=12)
+        # Buttons (pack side=bottom ก่อน — ปุ่มไม่หายเด็ดขาด)
+        _dialog_btn_bar(self, self._save, self.destroy)
+
+        # Scrollable form body
+        body = _ScrollableBody(self)
+        body.pack(fill="both", expand=True)
+        frm = body.inner
         frm.columnconfigure(1, weight=1)
 
         def row_label(r, text):
@@ -2873,17 +2978,7 @@ class CourseAddDialog(tk.Toplevel):
         self.desc_text = tk.Text(frm, width=36, height=3,
                                   font=("Arial", 9), wrap="word")
         self.desc_text.insert("1.0", ex.get("description_th", ""))
-        self.desc_text.grid(row=7, column=1, sticky="w", pady=4)
-
-        # Buttons
-        btn_f = tk.Frame(self, bg=BG)
-        btn_f.pack(pady=14)
-        tk.Button(btn_f, text="💾  บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
-                  relief="flat", padx=22, pady=7, cursor="hand2",
-                  command=self._save).pack(side="left", padx=8)
-        tk.Button(btn_f, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
-                  relief="flat", padx=16, pady=7,
-                  command=self.destroy).pack(side="left", padx=4)
+        self.desc_text.grid(row=7, column=1, sticky="w", pady=(4, 12))
         self.wait_window()
 
     def _save(self):
@@ -2929,7 +3024,7 @@ class PLOManagerDialog(tk.Toplevel):
         super().__init__(parent)
         cur_ver = curriculum["version"] if curriculum else "?"
         self.title(f"จัดการ PLO — หลักสูตร {cur_ver}")
-        self.geometry("700x500")
+        self.minsize(700, 0)
         self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
@@ -3050,8 +3145,8 @@ class PLOEditRowDialog(tk.Toplevel):
     def __init__(self, parent, plo_number, plo_code, category, description, cats):
         super().__init__(parent)
         self.title(f"PLO {plo_number}")
-        self.geometry("460x285")
-        self.resizable(False, False)
+        self.minsize(460, 0)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -3126,7 +3221,7 @@ class CourseCLOEditor(tk.Toplevel):
         course = dict(course) if course else {}
         code = course["code"] if course else "?"
         self.title(f"แก้ไข CLO & การประเมิน — {code}")
-        self.geometry("780x600")
+        self.minsize(780, 0)
         self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
@@ -3368,7 +3463,6 @@ class CLOEditRowDialog(tk.Toplevel):
     def __init__(self, parent, clo, plos, domains):
         super().__init__(parent)
         self.title(f"CLO {clo.get('clo_number','')}")
-        self.geometry("640x450")
         self.minsize(580, 420)
         self.resizable(True, True)
         self.configure(bg=BG)
@@ -3495,7 +3589,6 @@ class AsmtEditRowDialog(tk.Toplevel):
     def __init__(self, parent, asmt, clos):
         super().__init__(parent)
         self.title("รายการประเมิน")
-        self.geometry("560x420")
         self.minsize(520, 380)
         self.resizable(True, True)
         self.configure(bg=BG)
@@ -3618,8 +3711,8 @@ class CourseEditDialog(tk.Toplevel):
     def __init__(self, parent, course, curricula, tqf3_row=None):
         super().__init__(parent)
         self.title(f"แก้ไขข้อมูล — {course['code']}")
-        self.geometry("440x380")
-        self.resizable(False, False)
+        self.minsize(440, 0)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -3776,7 +3869,7 @@ class CourseTeachingPlanDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(f"แผนการสอน — {course['code']} {course['name_th'] or ''}")
         self.resizable(True, True)
-        self.geometry("860x560")
+        self.minsize(860, 0)
         self.grab_set()
         self.result = None
         self._rows = [dict(r) for r in plan_rows]
@@ -3937,7 +4030,6 @@ class _TeachingPlanRowDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("แก้ไขแผนการสอน" if row else "เพิ่มแผนการสอน")
         self.resizable(True, True)
-        self.geometry("760x620")
         self.minsize(680, 560)
         self.grab_set()
         self.result = None
@@ -4066,7 +4158,7 @@ class CourseResourcesDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(f"ทรัพยากรการสอน — {course['code']} {course['name_th'] or ''}")
         self.resizable(True, True)
-        self.geometry("720x520")
+        self.minsize(720, 0)
         self.grab_set()
         self.result = None
         self._rows = [dict(r) for r in resources]
@@ -4196,8 +4288,8 @@ class _ResourceRowDialog(tk.Toplevel):
     def __init__(self, parent, row: dict = None):
         super().__init__(parent)
         self.title("แก้ไขทรัพยากร" if row else "เพิ่มทรัพยากร")
-        self.resizable(False, False)
-        self.geometry("560x240")
+        self.resizable(False, True)
+        self.minsize(560, 0)
         self.grab_set()
         self.result = None
         row = row or {}
@@ -4264,7 +4356,7 @@ class TQF3StaffDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(f"บุคลากร มคอ.3 — {course['code']} {course['name_th'] or ''}")
         self.resizable(True, True)
-        self.geometry("680x540")
+        self.minsize(680, 0)
         self.grab_set()
         self.result = None
         self._tqf3_records = tqf3_records
@@ -4439,8 +4531,8 @@ class _PersonRowDialog(tk.Toplevel):
     def __init__(self, parent, row: dict = None):
         super().__init__(parent)
         self.title("แก้ไขบุคลากร" if row else "เพิ่มบุคลากร")
-        self.resizable(False, False)
-        self.geometry("440x200")
+        self.resizable(False, True)
+        self.minsize(440, 0)
         self.grab_set()
         self.result = None
         row = row or {}
@@ -4495,7 +4587,7 @@ class LLOEditorDialog(tk.Toplevel):
         course = dict(course) if course else {}
         code = course.get("code", "?")
         self.title(f"จัดการ LLO — {code}")
-        self.geometry("720x560")
+        self.minsize(720, 0)
         self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
@@ -4670,8 +4762,8 @@ class _LLORowDialog(tk.Toplevel):
     def __init__(self, parent, row: dict):
         super().__init__(parent)
         self.title("แก้ไข LLO" if row.get("id") else "เพิ่ม LLO")
-        self.geometry("480x220")
-        self.resizable(False, False)
+        self.minsize(480, 0)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -4730,7 +4822,7 @@ class OfferingInstructorsDialog(tk.Toplevel):
         code = offering.get("code", "?")
         sec = offering.get("section_code", "")
         self.title(f"ผู้สอน — {code} {sec}")
-        self.geometry("560x420")
+        self.minsize(560, 0)
         self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
@@ -4837,8 +4929,8 @@ class _InstructorRowDialog(tk.Toplevel):
     def __init__(self, parent, row: dict):
         super().__init__(parent)
         self.title("แก้ไขผู้สอน" if row.get("instructor_name") else "เพิ่มผู้สอน")
-        self.geometry("420x200")
-        self.resizable(False, False)
+        self.minsize(420, 0)
+        self.resizable(False, True)
         self.configure(bg=BG)
         self.grab_set()
         self.result = None
@@ -4854,9 +4946,11 @@ class _InstructorRowDialog(tk.Toplevel):
 
         tk.Label(form, text="บทบาท", bg=BG, font=FONT_B).grid(
             row=1, column=0, sticky="w", pady=6)
-        self._role_var = tk.StringVar(value=row.get("role", "co"))
+        self._role_var = tk.StringVar(
+            value=self.ROLE_LABELS.get(row.get("role", "co"), "ผู้สอนร่วม"))
         role_cb = ttk.Combobox(form, textvariable=self._role_var,
-                                values=["main", "co"], width=10, state="readonly")
+                                values=list(self.ROLE_LABELS.values()),
+                                width=12, state="readonly")
         role_cb.grid(row=1, column=1, sticky="w", padx=10)
 
         tk.Label(form, text="ตอนที่สอน", bg=BG, font=FONT_B).grid(
@@ -4877,9 +4971,10 @@ class _InstructorRowDialog(tk.Toplevel):
         name = self._name_var.get().strip()
         if not name:
             messagebox.showwarning("ข้อมูลผิด", "กรุณากรอกชื่อ-สกุล", parent=self); return
+        role_map = {v: k for k, v in self.ROLE_LABELS.items()}
         self.result = {
             "instructor_name": name,
-            "role": self._role_var.get() or "co",
+            "role": role_map.get(self._role_var.get(), "co"),
             "section": self._section_var.get().strip(),
         }
         self.destroy()
