@@ -6,11 +6,16 @@ SQLite schema + CRUD helpers
 import json
 import os
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime
 
+# Allow importing tqf_system package from the project root
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tqf_database.db")
+DB_PATH = os.path.join(_HERE, "tqf_database.db")
 
 
 @contextmanager
@@ -424,6 +429,13 @@ def init_db():
                 print(f"[DB] Migration: linked {touched} tqf3 row(s) to course_offerings")
 
         ensure_course_offerings_backfill()
+
+    # Run versioned migrations (Phase 1+)
+    try:
+        from tqf_system.migrations.runner import run_migrations
+        run_migrations(DB_PATH)
+    except Exception as exc:
+        print(f"[DB] Warning: migration runner error — {exc}")
 
     print(f"[DB] Initialized: {DB_PATH}")
 
