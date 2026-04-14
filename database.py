@@ -1631,6 +1631,208 @@ def copy_course_template_to_tqf3(course_id: int, tqf3_id: int):
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Students, Enrollments, LLOs, CLO-LLO map, Offering Instructors
+# ---------------------------------------------------------------------------
+
+def upsert_student(student_code: str, full_name_th: str, full_name_en: str = "",
+                   curriculum_id: int = None, entry_year: int = None,
+                   status: str = "active") -> int:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO students (student_code, full_name_th, full_name_en,
+                                  curriculum_id, entry_year, status)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(student_code) DO UPDATE SET
+                full_name_th = excluded.full_name_th,
+                full_name_en = CASE WHEN excluded.full_name_en!='' THEN excluded.full_name_en ELSE full_name_en END,
+                status       = excluded.status
+            """,
+            (student_code, full_name_th, full_name_en, curriculum_id, entry_year, status),
+        )
+        row = conn.execute(
+            "SELECT id FROM students WHERE student_code=?", (student_code,)
+        ).fetchone()
+        return row["id"]
+
+
+def get_student_by_code(student_code: str):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM students WHERE student_code=?", (student_code,)
+        ).fetchone()
+
+
+def get_all_students(curriculum_id: int = None) -> list:
+    with get_conn() as conn:
+        if curriculum_id is not None:
+            return conn.execute(
+                "SELECT * FROM students WHERE curriculum_id=? ORDER BY student_code",
+                (curriculum_id,),
+            ).fetchall()
+        return conn.execute(
+            "SELECT * FROM students ORDER BY student_code"
+        ).fetchall()
+
+
+def upsert_enrollment(offering_id: int, student_id: int, section: str = "",
+                      midterm_score=None, final_score=None, total_score=None,
+                      final_grade: str = "", grade_points=None) -> int:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO enrollments (offering_id, student_id, section,
+                                     midterm_score, final_score, total_score,
+                                     final_grade, grade_points, imported_at)
+            VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))
+            ON CONFLICT(offering_id, student_id) DO UPDATE SET
+                section       = CASE WHEN excluded.section!='' THEN excluded.section ELSE section END,
+                midterm_score = COALESCE(excluded.midterm_score, midterm_score),
+                final_score   = COALESCE(excluded.final_score,   final_score),
+                total_score   = COALESCE(excluded.total_score,   total_score),
+                final_grade   = CASE WHEN excluded.final_grade!='' THEN excluded.final_grade ELSE final_grade END,
+                grade_points  = COALESCE(excluded.grade_points,  grade_points),
+                imported_at   = datetime('now','localtime')
+            """,
+            (offering_id, student_id, section, midterm_score, final_score,
+             total_score, final_grade, grade_points),
+        )
+        row = conn.execute(
+            "SELECT id FROM enrollments WHERE offering_id=? AND student_id=?",
+            (offering_id, student_id),
+        ).fetchone()
+        return row["id"]
+
+
+def get_enrollments(offering_id: int) -> list:
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT e.*, s.student_code, s.full_name_th, s.full_name_en
+            FROM enrollments e
+            JOIN students s ON s.id = e.student_id
+            WHERE e.offering_id=?
+            ORDER BY s.student_code
+            """,
+            (offering_id,),
+        ).fetchall()
+
+
+def delete_enrollment(offering_id: int, student_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM enrollments WHERE offering_id=? AND student_id=?",
+            (offering_id, student_id),
+        )
+
+
+# --- LLOs ---
+
+def get_llos(course_id: int) -> list:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM llos WHERE course_id=? ORDER BY llo_number",
+            (course_id,),
+        ).fetchall()
+
+
+def replace_llos(course_id: int, llos_list: list) -> None:
+    """Replace all LLOs for a course. llos_list = [{llo_number, description_th, description_en}]"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM llos WHERE course_id=?", (course_id,))
+        for item in llos_list:
+            conn.execute(
+                """
+                INSERT INTO llos (course_id, llo_number, description_th, description_en)
+                VALUES (?,?,?,?)
+                """,
+                (
+                    course_id,
+                    item["llo_number"],
+                    item.get("description_th", ""),
+                    item.get("description_en", ""),
+                ),
+            )
+
+
+# --- CLO <-> LLO mapping ---
+
+def get_clo_llo_map(course_id: int) -> list:
+    """Return all CLO-LLO mappings for a course as list of {clo_id, llo_id, weight}."""
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT m.clo_id, m.llo_id, m.weight,
+                   cc.clo_number, cc.description AS clo_desc,
+                   l.llo_number,  l.description_th AS llo_desc
+            FROM clo_llo_map m
+            JOIN course_clos cc ON cc.id = m.clo_id
+            JOIN llos l         ON l.id  = m.llo_id
+            WHERE cc.course_id=?
+            ORDER BY cc.clo_number, l.llo_number
+            """,
+            (course_id,),
+        ).fetchall()
+
+
+def replace_clo_llo_map(course_id: int, mappings: list) -> None:
+    """Replace CLO-LLO map for a course. mappings = [{clo_id, llo_id, weight}]"""
+    with get_conn() as conn:
+        # Delete existing mappings for this course's CLOs
+        conn.execute(
+            """
+            DELETE FROM clo_llo_map
+            WHERE clo_id IN (SELECT id FROM course_clos WHERE course_id=?)
+            """,
+            (course_id,),
+        )
+        for m in mappings:
+            conn.execute(
+                "INSERT OR IGNORE INTO clo_llo_map (clo_id, llo_id, weight) VALUES (?,?,?)",
+                (m["clo_id"], m["llo_id"], m.get("weight", 1.0)),
+            )
+
+
+# --- Offering instructors ---
+
+def get_offering_instructors(offering_id: int) -> list:
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM offering_instructors
+            WHERE offering_id=?
+            ORDER BY ordering, instructor_name
+            """,
+            (offering_id,),
+        ).fetchall()
+
+
+def replace_offering_instructors(offering_id: int, instructors: list) -> None:
+    """Replace instructor list for an offering.
+    instructors = [{instructor_name, role, section, ordering}]
+    """
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM offering_instructors WHERE offering_id=?", (offering_id,)
+        )
+        for i, item in enumerate(instructors):
+            conn.execute(
+                """
+                INSERT INTO offering_instructors
+                    (offering_id, instructor_name, role, section, ordering)
+                VALUES (?,?,?,?,?)
+                """,
+                (
+                    offering_id,
+                    item["instructor_name"],
+                    item.get("role", "co"),
+                    item.get("section", ""),
+                    item.get("ordering", i),
+                ),
+            )
+
+
 if __name__ == "__main__":
     init_db()
     print("Database initialized successfully.")

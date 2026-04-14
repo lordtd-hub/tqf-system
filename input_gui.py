@@ -788,6 +788,11 @@ class TQFApp(tk.Tk):
             font=FONT_B, relief="flat", padx=12, pady=4,
             cursor="hand2", state="disabled", command=self._edit_course_clos)
         self.btn_cat_clo.pack(side="left", padx=(0, 6))
+        self.btn_cat_llo = tk.Button(
+            action_row, text="LLO", bg="#0277BD", fg=WHITE,
+            font=FONT_B, relief="flat", padx=12, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_course_llos)
+        self.btn_cat_llo.pack(side="left", padx=(0, 6))
         self.btn_cat_plan = tk.Button(
             action_row, text="แผนการสอน", bg="#00838F", fg=WHITE,
             font=FONT_B, relief="flat", padx=12, pady=4,
@@ -993,6 +998,12 @@ class TQFApp(tk.Tk):
             cursor="hand2", state="disabled", command=self._edit_selected_offering_staff
         )
         self.btn_cat_offering_staff.pack(side="left", padx=(0, 6))
+        self.btn_cat_offering_instructors = tk.Button(
+            context_buttons, text="ผู้สอน", bg="#00838F", fg=WHITE,
+            font=FONT_B, relief="flat", padx=10, pady=4,
+            cursor="hand2", state="disabled", command=self._edit_offering_instructors
+        )
+        self.btn_cat_offering_instructors.pack(side="left", padx=(0, 6))
         self.btn_cat_del_offering = tk.Button(
             context_buttons, text="ลบการเปิดสอน", bg=RED, fg=WHITE,
             font=FONT_B, relief="flat", padx=10, pady=4,
@@ -1224,6 +1235,7 @@ class TQFApp(tk.Tk):
         self.btn_cat_edit.config(state=state)
         self.btn_cat_del.config(state=state)
         self.btn_cat_clo.config(state=state)
+        self.btn_cat_llo.config(state=state)
         self.btn_cat_plan.config(state=state)
         self.btn_cat_gen3.config(state=state)
         self.btn_cat_res.config(state=state)
@@ -1245,6 +1257,9 @@ class TQFApp(tk.Tk):
         self.btn_cat_offering_gen3.config(state="normal" if has_offering else "disabled")
         self.btn_cat_offering_staff.config(
             state="normal" if has_offering and offering.get("tqf3_id") else "disabled"
+        )
+        self.btn_cat_offering_instructors.config(
+            state="normal" if has_offering else "disabled"
         )
         self.btn_cat_del_offering.config(
             state="normal" if has_offering else "disabled"
@@ -1678,6 +1693,49 @@ class TQFApp(tk.Tk):
                 db.replace_course_assessments(course_id, dlg.result["assessments"])
                 self._refresh_catalog()
                 self._load_cat_detail(course_id, vals)
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
+
+    def _edit_course_llos(self):
+        sel = self.cat_tree.selection()
+        if not sel: return
+        vals = self.cat_tree.item(sel[0], "values")
+        course_id = int(vals[5])
+        try:
+            import database as db; db.init_db()
+            course = dict(sqlite3.connect(db.DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+                          .execute("SELECT * FROM courses WHERE id=?", (course_id,)).fetchone()
+                          or {})
+            llos = db.get_llos(course_id)
+            clos = db.get_course_clos(course_id)
+            mapping = db.get_clo_llo_map(course_id)
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดไม่ได้: {e}", parent=self); return
+
+        dlg = LLOEditorDialog(self, course, llos, clos, mapping)
+        if dlg.result:
+            try:
+                import database as db; db.init_db()
+                db.replace_llos(course_id, dlg.result["llos"])
+                db.replace_clo_llo_map(course_id, dlg.result["mapping"])
+                self._load_cat_detail(course_id, vals)
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
+
+    def _edit_offering_instructors(self):
+        offering = self._selected_catalog_offering()
+        if not offering: return
+        try:
+            import database as db; db.init_db()
+            instructors = db.get_offering_instructors(offering["offering_id"])
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"โหลดไม่ได้: {e}", parent=self); return
+
+        dlg = OfferingInstructorsDialog(self, offering, instructors)
+        if dlg.result is not None:
+            try:
+                import database as db; db.init_db()
+                db.replace_offering_instructors(offering["offering_id"], dlg.result)
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
 
@@ -2131,6 +2189,7 @@ class TQFApp(tk.Tk):
         self.btn_cat_edit.config(state="disabled")
         self.btn_cat_del.config(state="disabled")
         self.btn_cat_clo.config(state="disabled")
+        self.btn_cat_llo.config(state="disabled")
         self.btn_cat_plan.config(state="disabled")
         self.btn_cat_gen3.config(state="disabled")
         self.btn_cat_res.config(state="disabled")
@@ -4421,6 +4480,408 @@ class _PersonRowDialog(tk.Toplevel):
         label = self._role_cb.get()
         role = next((k for k, v in self.ROLE_LABELS.items() if v == label), "instructor")
         self.result = {"role": role, "name": name}
+        self.destroy()
+
+
+# ══════════════════════════════════════════════════════
+# Phase 2: LLO Editor + Offering Instructors Dialog
+# ══════════════════════════════════════════════════════
+
+class LLOEditorDialog(tk.Toplevel):
+    """Edit LLOs for a course + manage CLO<->LLO mapping."""
+
+    def __init__(self, parent, course, llos, clos, mapping):
+        super().__init__(parent)
+        course = dict(course) if course else {}
+        code = course.get("code", "?")
+        self.title(f"จัดการ LLO — {code}")
+        self.geometry("720x560")
+        self.resizable(True, True)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.result = None
+        self._llos = [dict(l) for l in llos]
+        self._clos = [dict(c) for c in clos]
+        # mapping rows: {clo_id, llo_id, clo_number, llo_number, weight}
+        self._mapping = {(m["clo_id"], m["llo_id"]): m["weight"]
+                         for m in mapping}
+
+        # Header
+        hdr = tk.Frame(self, bg=BLUE_DARK)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=f"LLO & CLO-LLO Mapping — {code} {course.get('name_th', '')}",
+                 bg=BLUE_DARK, fg=WHITE, font=FONT_B,
+                 wraplength=680, anchor="w").pack(padx=14, pady=9)
+
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=10, pady=6)
+        self._tab_llo = tk.Frame(nb, bg=BG)
+        self._tab_map = tk.Frame(nb, bg=BG)
+        nb.add(self._tab_llo, text="  LLO  ")
+        nb.add(self._tab_map, text="  CLO ↔ LLO  ")
+        self._build_llo_tab()
+        self._build_map_tab()
+
+        btn_f = tk.Frame(self, bg=BG)
+        btn_f.pack(pady=10)
+        tk.Button(btn_f, text="บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=22, pady=7, command=self._save).pack(side="left", padx=8)
+        tk.Button(btn_f, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
+                  relief="flat", padx=16, pady=7, command=self.destroy).pack(side="left", padx=4)
+        self.wait_window()
+
+    # ── LLO Tab ───────────────────────────────────────
+
+    def _build_llo_tab(self):
+        t = self._tab_llo
+        bar = tk.Frame(t, bg=BG)
+        bar.pack(fill="x", pady=(8, 4), padx=8)
+        tk.Button(bar, text="+ เพิ่ม LLO", bg=GREEN, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=10, pady=4, command=self._add_llo).pack(side="left", padx=(0, 6))
+        self._btn_del_llo = tk.Button(bar, text="ลบ", bg=RED, fg=WHITE, font=FONT_B,
+                                      relief="flat", padx=10, pady=4, state="disabled",
+                                      command=self._del_llo)
+        self._btn_del_llo.pack(side="left")
+        tk.Label(t, text="LLO = ผลลัพธ์การเรียนรู้ระดับชั้นเรียน (Lesson-Level Learning Outcome)",
+                 bg=BG, fg=GRAY, font=FONT_SM).pack(anchor="w", padx=8)
+
+        cols = ("no", "desc_th", "desc_en")
+        self._llo_tree = ttk.Treeview(t, columns=cols, show="headings",
+                                       selectmode="browse", height=12)
+        self._llo_tree.heading("no", text="LLO#")
+        self._llo_tree.heading("desc_th", text="คำอธิบาย (ไทย)")
+        self._llo_tree.heading("desc_en", text="คำอธิบาย (Eng)")
+        self._llo_tree.column("no", width=50, anchor="center")
+        self._llo_tree.column("desc_th", width=300, anchor="w")
+        self._llo_tree.column("desc_en", width=280, anchor="w")
+        vsb = ttk.Scrollbar(t, orient="vertical", command=self._llo_tree.yview)
+        self._llo_tree.configure(yscrollcommand=vsb.set)
+        self._llo_tree.pack(side="left", fill="both", expand=True, padx=8, pady=4)
+        vsb.pack(side="right", fill="y", pady=4)
+        self._llo_tree.bind("<<TreeviewSelect>>",
+                             lambda e: self._btn_del_llo.config(
+                                 state="normal" if self._llo_tree.selection() else "disabled"))
+        self._llo_tree.bind("<Double-1>", lambda e: self._edit_llo())
+        self._refresh_llo_tree()
+
+    def _refresh_llo_tree(self):
+        for row in self._llo_tree.get_children():
+            self._llo_tree.delete(row)
+        for item in self._llos:
+            self._llo_tree.insert("", "end", values=(
+                item.get("llo_number", ""),
+                item.get("description_th", ""),
+                item.get("description_en", ""),
+            ))
+
+    def _add_llo(self):
+        next_no = max((l.get("llo_number", 0) for l in self._llos), default=0) + 1
+        dlg = _LLORowDialog(self, {"llo_number": next_no})
+        if dlg.result:
+            self._llos.append(dlg.result)
+            self._llos.sort(key=lambda x: x.get("llo_number", 0))
+            self._refresh_llo_tree()
+
+    def _edit_llo(self):
+        sel = self._llo_tree.selection()
+        if not sel: return
+        idx = self._llo_tree.index(sel[0])
+        dlg = _LLORowDialog(self, self._llos[idx])
+        if dlg.result:
+            self._llos[idx] = dlg.result
+            self._refresh_llo_tree()
+
+    def _del_llo(self):
+        sel = self._llo_tree.selection()
+        if not sel: return
+        idx = self._llo_tree.index(sel[0])
+        if messagebox.askyesno("ยืนยัน", "ลบ LLO นี้ใช่ไหม?", parent=self):
+            self._llos.pop(idx)
+            self._refresh_llo_tree()
+
+    # ── Map Tab ───────────────────────────────────────
+
+    def _build_map_tab(self):
+        t = self._tab_map
+        tk.Label(t, text="ทำเครื่องหมาย CLO ที่เกี่ยวข้องกับแต่ละ LLO",
+                 bg=BG, fg=GRAY, font=FONT_SM).pack(anchor="w", padx=8, pady=(8, 4))
+
+        frame = tk.Frame(t, bg=BG)
+        frame.pack(fill="both", expand=True, padx=8, pady=4)
+
+        canvas = tk.Canvas(frame, bg=BG, highlightthickness=0)
+        h_sb = ttk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
+        v_sb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas.configure(xscrollcommand=h_sb.set, yscrollcommand=v_sb.set)
+
+        h_sb.pack(side="bottom", fill="x")
+        v_sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=BG)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")))
+
+        self._check_vars: dict[tuple, tk.IntVar] = {}
+
+        # Header row: CLOs
+        tk.Label(inner, text="LLO \\ CLO", bg=BG, font=FONT_B,
+                 width=30, anchor="w").grid(row=0, column=0, padx=4, pady=2)
+        for j, clo in enumerate(self._clos):
+            tk.Label(inner, text=f"CLO{clo.get('clo_number', j+1)}",
+                     bg=BG, font=FONT_SM, width=6, anchor="center",
+                     wraplength=60).grid(row=0, column=j + 1, padx=2)
+
+        # Data rows: LLOs × CLOs
+        for i, llo in enumerate(self._llos):
+            desc = (llo.get("description_th") or "")[:35]
+            tk.Label(inner, text=f"LLO{llo.get('llo_number','?')} {desc}",
+                     bg=BG, font=FONT_SM, width=30, anchor="w").grid(
+                row=i + 1, column=0, padx=4, pady=2)
+            for j, clo in enumerate(self._clos):
+                key = (clo.get("id", clo.get("clo_id")), llo.get("id", llo.get("llo_id")))
+                var = tk.IntVar(value=1 if key in self._mapping else 0)
+                self._check_vars[key] = var
+                tk.Checkbutton(inner, variable=var, bg=BG).grid(
+                    row=i + 1, column=j + 1, padx=2)
+
+        if not self._llos:
+            tk.Label(inner, text="ยังไม่มี LLO — ไปเพิ่มใน tab LLO ก่อน",
+                     bg=BG, fg=GRAY, font=FONT_SM).grid(row=1, column=0, columnspan=10)
+        if not self._clos:
+            tk.Label(inner, text="ยังไม่มี CLO มาตรฐาน — ไปเพิ่มใน แก้ไข CLO ก่อน",
+                     bg=BG, fg=GRAY, font=FONT_SM).grid(row=2, column=0, columnspan=10)
+
+    # ── Save ─────────────────────────────────────────
+
+    def _save(self):
+        mappings = []
+        for (clo_id, llo_id), var in self._check_vars.items():
+            if var.get():
+                mappings.append({"clo_id": clo_id, "llo_id": llo_id, "weight": 1.0})
+        self.result = {"llos": self._llos, "mapping": mappings}
+        self.destroy()
+
+
+class _LLORowDialog(tk.Toplevel):
+    """Add / edit a single LLO row."""
+
+    def __init__(self, parent, row: dict):
+        super().__init__(parent)
+        self.title("แก้ไข LLO" if row.get("id") else "เพิ่ม LLO")
+        self.geometry("480x220")
+        self.resizable(False, False)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.result = None
+
+        form = tk.Frame(self, bg=BG)
+        form.pack(padx=16, pady=14, fill="x")
+
+        tk.Label(form, text="LLO#", bg=BG, font=FONT_B).grid(row=0, column=0, sticky="w", pady=6)
+        self._no_var = tk.StringVar(value=str(row.get("llo_number", "")))
+        tk.Entry(form, textvariable=self._no_var, width=8, font=FONT).grid(
+            row=0, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="คำอธิบาย (ไทย)", bg=BG, font=FONT_B).grid(
+            row=1, column=0, sticky="nw", pady=6)
+        self._desc_th = tk.Text(form, width=40, height=3, font=FONT, wrap="word")
+        self._desc_th.grid(row=1, column=1, padx=10)
+        self._desc_th.insert("1.0", row.get("description_th", "") or "")
+
+        tk.Label(form, text="คำอธิบาย (Eng)", bg=BG, font=FONT_B).grid(
+            row=2, column=0, sticky="nw", pady=6)
+        self._desc_en = tk.Text(form, width=40, height=2, font=FONT, wrap="word")
+        self._desc_en.grid(row=2, column=1, padx=10)
+        self._desc_en.insert("1.0", row.get("description_en", "") or "")
+
+        btn_f = tk.Frame(self, bg=BG)
+        btn_f.pack(pady=8)
+        tk.Button(btn_f, text="บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=18, pady=6, command=self._confirm).pack(side="left", padx=6)
+        tk.Button(btn_f, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
+                  relief="flat", padx=14, pady=6, command=self.destroy).pack(side="left", padx=4)
+        self.wait_window()
+
+    def _confirm(self):
+        try:
+            no = int(self._no_var.get().strip())
+        except ValueError:
+            messagebox.showwarning("ข้อมูลผิด", "LLO# ต้องเป็นตัวเลข", parent=self); return
+        desc_th = self._desc_th.get("1.0", "end").strip()
+        if not desc_th:
+            messagebox.showwarning("ข้อมูลผิด", "กรุณากรอกคำอธิบาย (ไทย)", parent=self); return
+        self.result = {
+            "llo_number": no,
+            "description_th": desc_th,
+            "description_en": self._desc_en.get("1.0", "end").strip(),
+        }
+        self.destroy()
+
+
+class OfferingInstructorsDialog(tk.Toplevel):
+    """Manage multi-instructor list for a course offering."""
+
+    ROLE_LABELS = {"main": "ผู้สอนหลัก", "co": "ผู้สอนร่วม"}
+
+    def __init__(self, parent, offering: dict, instructors: list):
+        super().__init__(parent)
+        code = offering.get("code", "?")
+        sec = offering.get("section_code", "")
+        self.title(f"ผู้สอน — {code} {sec}")
+        self.geometry("560x420")
+        self.resizable(True, True)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.result = None
+        self._instructors = [dict(i) for i in instructors]
+
+        hdr = tk.Frame(self, bg=BLUE_DARK)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=f"ผู้สอน — {code} ตอนเรียน {sec}",
+                 bg=BLUE_DARK, fg=WHITE, font=FONT_B).pack(padx=14, pady=9, anchor="w")
+
+        bar = tk.Frame(self, bg=BG)
+        bar.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Button(bar, text="+ เพิ่มผู้สอน", bg=GREEN, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=10, pady=4, command=self._add).pack(side="left", padx=(0, 6))
+        self._btn_edit = tk.Button(bar, text="แก้ไข", bg=BLUE, fg=WHITE, font=FONT_B,
+                                    relief="flat", padx=10, pady=4, state="disabled",
+                                    command=self._edit)
+        self._btn_edit.pack(side="left", padx=(0, 6))
+        self._btn_del = tk.Button(bar, text="ลบ", bg=RED, fg=WHITE, font=FONT_B,
+                                   relief="flat", padx=10, pady=4, state="disabled",
+                                   command=self._del)
+        self._btn_del.pack(side="left")
+
+        cols = ("role", "name", "section")
+        self._tree = ttk.Treeview(self, columns=cols, show="headings",
+                                   selectmode="browse", height=12)
+        self._tree.heading("role", text="บทบาท")
+        self._tree.heading("name", text="ชื่อ-สกุล")
+        self._tree.heading("section", text="ตอนที่สอน")
+        self._tree.column("role", width=110, anchor="center")
+        self._tree.column("name", width=280, anchor="w")
+        self._tree.column("section", width=90, anchor="center")
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
+        self._tree.configure(yscrollcommand=vsb.set)
+        self._tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=4)
+        vsb.pack(side="right", fill="y", pady=4, padx=(0, 4))
+        self._tree.bind("<<TreeviewSelect>>", self._on_select)
+        self._tree.bind("<Double-1>", lambda e: self._edit())
+        self._refresh_tree()
+
+        btn_f = tk.Frame(self, bg=BG)
+        btn_f.pack(pady=10)
+        tk.Button(btn_f, text="บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=22, pady=7, command=self._save).pack(side="left", padx=8)
+        tk.Button(btn_f, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
+                  relief="flat", padx=16, pady=7, command=self.destroy).pack(side="left", padx=4)
+        self.wait_window()
+
+    def _refresh_tree(self):
+        for row in self._tree.get_children():
+            self._tree.delete(row)
+        for i, item in enumerate(self._instructors):
+            role_lbl = self.ROLE_LABELS.get(item.get("role", "co"), item.get("role", "co"))
+            tag = "odd" if i % 2 == 0 else "even"
+            self._tree.insert("", "end", values=(
+                role_lbl,
+                item.get("instructor_name", ""),
+                item.get("section", ""),
+            ), tags=(tag,))
+        self._tree.tag_configure("odd", background=WHITE)
+        self._tree.tag_configure("even", background="#F7FAFC")
+
+    def _on_select(self, event=None):
+        has_sel = bool(self._tree.selection())
+        state = "normal" if has_sel else "disabled"
+        self._btn_edit.config(state=state)
+        self._btn_del.config(state=state)
+
+    def _add(self):
+        dlg = _InstructorRowDialog(self, {})
+        if dlg.result:
+            dlg.result["ordering"] = len(self._instructors)
+            self._instructors.append(dlg.result)
+            self._refresh_tree()
+
+    def _edit(self):
+        sel = self._tree.selection()
+        if not sel: return
+        idx = self._tree.index(sel[0])
+        dlg = _InstructorRowDialog(self, self._instructors[idx])
+        if dlg.result:
+            self._instructors[idx] = dlg.result
+            self._refresh_tree()
+
+    def _del(self):
+        sel = self._tree.selection()
+        if not sel: return
+        idx = self._tree.index(sel[0])
+        if messagebox.askyesno("ยืนยัน", "ลบผู้สอนนี้ใช่ไหม?", parent=self):
+            self._instructors.pop(idx)
+            self._refresh_tree()
+
+    def _save(self):
+        for i, item in enumerate(self._instructors):
+            item["ordering"] = i
+        self.result = self._instructors
+        self.destroy()
+
+
+class _InstructorRowDialog(tk.Toplevel):
+    """Add / edit a single instructor row."""
+
+    def __init__(self, parent, row: dict):
+        super().__init__(parent)
+        self.title("แก้ไขผู้สอน" if row.get("instructor_name") else "เพิ่มผู้สอน")
+        self.geometry("420x200")
+        self.resizable(False, False)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.result = None
+
+        form = tk.Frame(self, bg=BG)
+        form.pack(padx=16, pady=14, fill="x")
+
+        tk.Label(form, text="ชื่อ-สกุล *", bg=BG, font=FONT_B).grid(
+            row=0, column=0, sticky="w", pady=6)
+        self._name_var = tk.StringVar(value=row.get("instructor_name", ""))
+        tk.Entry(form, textvariable=self._name_var, width=32, font=FONT).grid(
+            row=0, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="บทบาท", bg=BG, font=FONT_B).grid(
+            row=1, column=0, sticky="w", pady=6)
+        self._role_var = tk.StringVar(value=row.get("role", "co"))
+        role_cb = ttk.Combobox(form, textvariable=self._role_var,
+                                values=["main", "co"], width=10, state="readonly")
+        role_cb.grid(row=1, column=1, sticky="w", padx=10)
+
+        tk.Label(form, text="ตอนที่สอน", bg=BG, font=FONT_B).grid(
+            row=2, column=0, sticky="w", pady=6)
+        self._section_var = tk.StringVar(value=row.get("section", ""))
+        tk.Entry(form, textvariable=self._section_var, width=10, font=FONT).grid(
+            row=2, column=1, sticky="w", padx=10)
+
+        btn_f = tk.Frame(self, bg=BG)
+        btn_f.pack(pady=8)
+        tk.Button(btn_f, text="บันทึก", bg=BLUE, fg=WHITE, font=FONT_B,
+                  relief="flat", padx=18, pady=6, command=self._confirm).pack(side="left", padx=6)
+        tk.Button(btn_f, text="ยกเลิก", bg="#9CA3AF", fg=WHITE, font=FONT,
+                  relief="flat", padx=14, pady=6, command=self.destroy).pack(side="left", padx=4)
+        self.wait_window()
+
+    def _confirm(self):
+        name = self._name_var.get().strip()
+        if not name:
+            messagebox.showwarning("ข้อมูลผิด", "กรุณากรอกชื่อ-สกุล", parent=self); return
+        self.result = {
+            "instructor_name": name,
+            "role": self._role_var.get() or "co",
+            "section": self._section_var.get().strip(),
+        }
         self.destroy()
 
 

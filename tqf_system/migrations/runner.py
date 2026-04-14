@@ -58,6 +58,42 @@ def _is_legacy_db(conn: sqlite3.Connection) -> bool:
     return "curricula" in tables
 
 
+def _split_statements(sql: str) -> list[str]:
+    """Split SQL file into individual statements, stripping comments."""
+    statements = []
+    current: list[str] = []
+    for line in sql.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("--"):
+            continue
+        current.append(line)
+        if stripped.endswith(";"):
+            stmt = "\n".join(current).strip()
+            if stmt:
+                statements.append(stmt)
+            current = []
+    return statements
+
+
+def _execute_migration(conn: sqlite3.Connection, sql: str) -> None:
+    """Execute a migration SQL file statement-by-statement.
+
+    ALTER TABLE ADD COLUMN raises OperationalError('duplicate column name: ...')
+    when the column already exists (can happen if a migration was partially applied
+    and retried). We skip that specific error so the migration can be safely re-run.
+    """
+    for stmt in _split_statements(sql):
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError as exc:
+            msg = str(exc).lower()
+            if "duplicate column name" in msg:
+                # Column was already added (partial re-run) — skip safely
+                print(f"[migrations]   skip (already exists): {stmt[:60].strip()}")
+            else:
+                raise
+
+
 def _list_pending(conn: sqlite3.Connection) -> list[tuple[str, Path]]:
     """Return list of (version, sql_path) for migrations not yet applied."""
     applied = _get_applied(conn)
@@ -117,7 +153,7 @@ def run_migrations(db_path: str) -> None:
             sql = sql_file.read_text(encoding="utf-8")
             print(f"[migrations] Applying {version} ...")
             try:
-                conn.executescript(sql)
+                _execute_migration(conn, sql)
                 _mark_applied(conn, version)
                 conn.commit()
                 print(f"[migrations] OK {version}")
