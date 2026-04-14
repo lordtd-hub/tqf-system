@@ -37,6 +37,29 @@ def _autosize_wait_window(self, window=None):
 
 tk.Toplevel.wait_window = _autosize_wait_window
 
+# ── Global fix: Escape ปิด dialog ทุก Toplevel อัตโนมัติ ───────────
+_orig_toplevel_init = tk.Toplevel.__init__
+
+
+def _patched_toplevel_init(self, master=None, **kw):
+    _orig_toplevel_init(self, master, **kw)
+    self.bind("<Escape>", lambda e: self.destroy())
+
+
+tk.Toplevel.__init__ = _patched_toplevel_init
+
+# ── Global fix: Ctrl+A เลือกทั้งหมดใน Entry ───────────────────────
+_orig_entry_init = tk.Entry.__init__
+
+
+def _patched_entry_init(self, master=None, **kw):
+    _orig_entry_init(self, master, **kw)
+    self.bind("<Control-a>", lambda e: (e.widget.select_range(0, "end"), "break")[1])
+    self.bind("<Control-A>", lambda e: (e.widget.select_range(0, "end"), "break")[1])
+
+
+tk.Entry.__init__ = _patched_entry_init
+
 # ══════════════════════════════════════════════════════
 # STYLES
 # ══════════════════════════════════════════════════════
@@ -440,13 +463,20 @@ class TQFApp(tk.Tk):
         }
         hidden = {"offering_id", "course_id", "tqf3_id", "state"}
         for col, (heading, width, anchor) in heads.items():
-            self.tree.heading(col, text=heading)
+            if col not in hidden:
+                self.tree.heading(
+                    col, text=heading,
+                    command=lambda c=col: self._sort_tree(self.tree, c))
+            else:
+                self.tree.heading(col, text=heading)
             self.tree.column(col, width=width, anchor=anchor,
                              minwidth=0 if col in hidden else 40)
         for state, bg in self._STATE_BG.items():
             self.tree.tag_configure(f"s_{state}", background=bg)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self.tree.bind("<Double-1>", self._on_tree_double_click)
+        self.tree.bind("<Button-3>", self._ctx_menu_dashboard)
+        self.tree.bind("<Return>",   lambda e: self._on_tree_double_click())
 
         vsb = ttk.Scrollbar(top_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -1077,6 +1107,70 @@ class TQFApp(tk.Tk):
 
         threading.Thread(target=do, daemon=True).start()
 
+    # ── UX helpers ───────────────────────────────────────────────────
+
+    _tree_sort_state: dict = {}   # {tree_id: (col, reverse)}
+
+    def _sort_tree(self, tree: ttk.Treeview, col: str) -> None:
+        """คลิก heading → เรียงข้อมูลใน Treeview แบบ toggle asc/desc"""
+        key = id(tree)
+        prev_col, prev_rev = self._tree_sort_state.get(key, (None, False))
+        reverse = (not prev_rev) if col == prev_col else False
+        self._tree_sort_state[key] = (col, reverse)
+
+        items = [(tree.set(iid, col), iid) for iid in tree.get_children("")]
+        try:
+            items.sort(key=lambda t: (t[0] == "", t[0].lower()), reverse=reverse)
+        except Exception:
+            items.sort(reverse=reverse)
+        for idx, (_, iid) in enumerate(items):
+            tree.move(iid, "", idx)
+
+        # ── indicator arrow in heading ─────────────────
+        for c in tree["columns"]:
+            text = tree.heading(c, "text").rstrip(" ▲▼")
+            tree.heading(c, text=text)
+        cur_text = tree.heading(col, "text").rstrip(" ▲▼")
+        tree.heading(col, text=cur_text + (" ▲" if not reverse else " ▼"))
+
+    def _ctx_menu_dashboard(self, event) -> None:
+        """Right-click เมนูบริบทบน TAB1 (แดชบอร์ดภาคการศึกษา)"""
+        row = self.tree.identify_row(event.y)
+        if row:
+            self.tree.selection_set(row)
+            self.tree.focus(row)
+        sel = self.tree.selection()
+        if not sel:
+            return
+        vals      = self.tree.item(sel[0], "values")
+        state     = vals[11] if len(vals) > 11 else "not_started"
+        tqf3_id   = vals[10] if len(vals) > 10 else ""
+        offering_id = vals[8] if len(vals) > 8 else ""
+
+        from tqf_system.core.state_machine import allowed_next, STATE_LABELS_TH
+
+        menu = tk.Menu(self, tearoff=0, bg=WHITE, fg="#212121",
+                       activebackground=BLUE, activeforeground=WHITE, font=FONT)
+        menu.add_command(label="✏️  แก้ไขข้อมูล",
+                         command=self._edit_course,
+                         state="normal" if offering_id else "disabled")
+        menu.add_command(label="📝  กรอก มคอ.3",
+                         command=self._goto_tqf3,
+                         state="normal" if offering_id else "disabled")
+        menu.add_command(label="📊  นำเข้าเกรด",
+                         command=self._goto_import,
+                         state="normal" if tqf3_id else "disabled")
+        menu.add_command(label="📄  สร้าง มคอ.5",
+                         command=self._generate_tqf5,
+                         state="normal" if state in (
+                             "grades_imported","ready_for_tqf5","tqf5_generated") else "disabled")
+        next_states = allowed_next(state)
+        if next_states and offering_id:
+            menu.add_separator()
+            menu.add_command(label="🔄  เปลี่ยนสถานะ…",
+                             command=self._transition_state_dialog)
+        menu.tk_popup(event.x_root, event.y_root)
+
     # ══════════════════════════════════════════════════
     # TAB 2: ฐานข้อมูลหลักสูตร (Course Catalog)
     # ══════════════════════════════════════════════════
@@ -1274,6 +1368,9 @@ class TQFApp(tk.Tk):
             self.cat_tree.column(col, width=width, anchor=anchor,
                                  minwidth=0 if col == "course_id" else 40)
         self.cat_tree.bind("<<TreeviewSelect>>", self._on_catalog_select)
+        self.cat_tree.bind("<Double-1>",  self._edit_catalog_course)
+        self.cat_tree.bind("<Return>",    self._edit_catalog_course)
+        self.cat_tree.bind("<Button-3>",  self._ctx_menu_catalog_course)
         cat_vsb = ttk.Scrollbar(course_frame, orient="vertical", command=self.cat_tree.yview)
         self.cat_tree.configure(yscrollcommand=cat_vsb.set)
         self.cat_tree.pack(side="left", fill="both", expand=True)
@@ -1331,13 +1428,21 @@ class TQFApp(tk.Tk):
         }
         hidden_cols = {"offering_id", "course_id", "tqf3_id"}
         for col, (heading, width, anchor) in offering_heads.items():
-            self.cat_offering_tree.heading(col, text=heading)
+            if col not in hidden_cols:
+                self.cat_offering_tree.heading(
+                    col, text=heading,
+                    command=lambda c=col: self._sort_tree(self.cat_offering_tree, c))
+            else:
+                self.cat_offering_tree.heading(col, text=heading)
             self.cat_offering_tree.column(
                 col, width=width, anchor=anchor,
                 minwidth=0 if col in hidden_cols else 40
             )
         self.cat_offering_tree.bind("<<TreeviewSelect>>", self._on_catalog_offering_select)
-        self.cat_offering_tree.bind("<Double-1>", self._on_catalog_offering_select)
+        self.cat_offering_tree.bind("<Double-1>",  self._on_catalog_offering_dbl_click)
+        self.cat_offering_tree.bind("<Button-3>",  self._ctx_menu_offering)
+        self.cat_offering_tree.bind("<Return>",    self._on_catalog_offering_dbl_click)
+        self.cat_offering_tree.bind("<Delete>",    lambda e: self._delete_course_offering_v2())
         self.cat_offering_tree.tag_configure("odd", background=WHITE)
         self.cat_offering_tree.tag_configure("even", background="#F7FAFC")
         offering_vsb = ttk.Scrollbar(
@@ -1687,6 +1792,96 @@ class TQFApp(tk.Tk):
         vals = self._focus_catalog_course(offering["course_id"])
         if vals:
             self._load_cat_detail(offering["course_id"], vals)
+
+    def _on_catalog_offering_dbl_click(self, event=None) -> None:
+        """Double-click หรือ Enter บน offering tree → เปิด dialog แก้ไขการเปิดสอน"""
+        offering = self._selected_catalog_offering()
+        if not offering:
+            return
+        try:
+            import database as db; db.init_db()
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.row_factory = sqlite3.Row
+            course = conn.execute(
+                "SELECT id, code, name_th, curriculum_id FROM courses WHERE id=?",
+                (offering["course_id"],),
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", str(e), parent=self)
+            return
+        if not course:
+            return
+        dlg = CourseOfferingDialog(
+            self, course,
+            semester_default=str(offering["semester"]),
+            year_default=str(offering["year"]),
+            existing=offering,          # pre-fill existing values
+        )
+        if not dlg.result:
+            return
+        try:
+            import database as db; db.init_db()
+            oid = db.upsert_course_offering(
+                offering["course_id"],
+                dlg.result["semester"],
+                dlg.result["year"],
+                curriculum_id=course["curriculum_id"],
+                section_code=dlg.result["section_code"],
+                is_special=dlg.result["is_special"],
+                status=dlg.result["status"],
+                source_type="catalog",
+            )
+            self._refresh_catalog_offerings(preserve_offering_id=oid)
+            self._refresh_courses()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
+
+    def _ctx_menu_offering(self, event) -> None:
+        """Right-click เมนูบริบทบน catalog offering tree"""
+        row = self.cat_offering_tree.identify_row(event.y)
+        if row:
+            self.cat_offering_tree.selection_set(row)
+            self.cat_offering_tree.focus(row)
+        offering = self._selected_catalog_offering()
+        if not offering:
+            return
+        has_tqf3 = bool(offering.get("tqf3_id"))
+        menu = tk.Menu(self, tearoff=0, bg=WHITE, fg="#212121",
+                       activebackground=BLUE, activeforeground=WHITE, font=FONT)
+        menu.add_command(label="✏️  แก้ไขการเปิดสอน",
+                         command=self._on_catalog_offering_dbl_click)
+        menu.add_command(label="📋  สร้าง มคอ.3",
+                         command=self._generate_tqf3,
+                         state="normal")
+        menu.add_command(label="👥  จัดการผู้สอน",
+                         command=self._edit_offering_instructors,
+                         state="normal")
+        menu.add_separator()
+        menu.add_command(label="🗑️  ลบการเปิดสอน",
+                         command=self._delete_course_offering_v2,
+                         state="normal")
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _ctx_menu_catalog_course(self, event) -> None:
+        """Right-click เมนูบริบทบน course list ใน Tab 2"""
+        row = self.cat_tree.identify_row(event.y)
+        if row:
+            self.cat_tree.selection_set(row)
+            self.cat_tree.focus(row)
+        sel = self.cat_tree.selection()
+        if not sel:
+            return
+        menu = tk.Menu(self, tearoff=0, bg=WHITE, fg="#212121",
+                       activebackground=BLUE, activeforeground=WHITE, font=FONT)
+        menu.add_command(label="✏️  แก้ไขข้อมูลวิชา",  command=self._edit_catalog_course)
+        menu.add_command(label="⚙️  แก้ไข CLO",         command=self._edit_course_clos)
+        menu.add_command(label="📋  แผนการสอน",          command=self._edit_course_teaching_plan)
+        menu.add_separator()
+        menu.add_command(label="📂  เปิดสอนวิชานี้",     command=self._add_course_offering)
+        menu.add_separator()
+        menu.add_command(label="🗑️  ลบวิชา",             command=self._delete_catalog_course)
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _clear_cat_detail(self):
         self.cat_detail_text.configure(state="normal")
@@ -2997,9 +3192,12 @@ class CourseOfferingDialog(tk.Toplevel):
     SECTION_CHOICES = ["N01", "P01"]
     STATUS_LABELS = {"เปิดสอน": "active", "วางแผน": "planned"}
 
-    def __init__(self, parent, course, semester_default="1", year_default="2569"):
+    def __init__(self, parent, course, semester_default="1", year_default="2569",
+                 existing=None):
+        """existing = dict from _selected_catalog_offering() for pre-fill (edit mode)."""
         super().__init__(parent)
-        self.title("เพิ่มการเปิดสอน")
+        is_edit = existing is not None
+        self.title("แก้ไขการเปิดสอน" if is_edit else "เพิ่มการเปิดสอน")
         self.resizable(False, True)
         self.minsize(420, 100)
         self.configure(bg=BG)
@@ -3009,9 +3207,22 @@ class CourseOfferingDialog(tk.Toplevel):
         code = course["code"] if course else "?"
         name = course["name_th"] if course else ""
 
-        # Buttons first (side=bottom) — ปุ่มไม่หายไม่ว่า content จะยาวแค่ไหน
+        # ── pre-fill values from existing offering (edit mode) ──────
+        if is_edit:
+            sem_init     = str(existing.get("semester", semester_default))
+            year_init    = str(existing.get("year",     year_default))
+            section_init = str(existing.get("section_code", "N01"))
+            status_raw   = existing.get("status", "active")
+            # reverse-map to Thai label
+            rev_status   = {v: k for k, v in self.STATUS_LABELS.items()}
+            status_init  = rev_status.get(status_raw, "เปิดสอน")
+        else:
+            sem_init, year_init, section_init, status_init = (
+                str(semester_default or "1"), str(year_default or "2569"), "N01", "เปิดสอน")
+
+        # Buttons first (side=bottom)
         _dialog_btn_bar(self, self._confirm, self.destroy,
-                        save_text="บันทึก", cancel_text="ยกเลิก")
+                        save_text="💾  บันทึก", cancel_text="ยกเลิก")
 
         # Header
         tk.Label(
@@ -3020,7 +3231,7 @@ class CourseOfferingDialog(tk.Toplevel):
         ).pack(padx=16, pady=(16, 4), anchor="w")
         tk.Label(
             self,
-            text="กำหนดข้อมูลการเปิดสอนจริงของรายวิชานี้",
+            text="แก้ไขข้อมูลการเปิดสอน" if is_edit else "กำหนดข้อมูลการเปิดสอนจริงของรายวิชานี้",
             bg=BG, fg=GRAY, font=FONT_SM
         ).pack(padx=16, anchor="w")
 
@@ -3028,20 +3239,20 @@ class CourseOfferingDialog(tk.Toplevel):
         form.pack(padx=16, pady=12, fill="x")
 
         tk.Label(form, text="ภาคเรียน *", bg=BG, font=FONT_B).grid(row=0, column=0, sticky="w", pady=7)
-        self.sem_var = tk.StringVar(value=str(semester_default or "1"))
+        self.sem_var = tk.StringVar(value=sem_init)
         ttk.Combobox(
             form, textvariable=self.sem_var, values=["1", "2", "3"],
             width=6, state="readonly"
         ).grid(row=0, column=1, sticky="w", padx=10)
 
         tk.Label(form, text="ปีการศึกษา *", bg=BG, font=FONT_B).grid(row=1, column=0, sticky="w", pady=7)
-        self.year_var = tk.StringVar(value=str(year_default or "2569"))
+        self.year_var = tk.StringVar(value=year_init)
         tk.Entry(form, textvariable=self.year_var,
                  width=10, font=FONT, relief="solid", bd=1
                  ).grid(row=1, column=1, sticky="w", padx=10)
 
         tk.Label(form, text="ตอนเรียน *", bg=BG, font=FONT_B).grid(row=2, column=0, sticky="w", pady=7)
-        self.section_var = tk.StringVar(value="N01")
+        self.section_var = tk.StringVar(value=section_init)
         ttk.Combobox(
             form, textvariable=self.section_var,
             values=self.SECTION_CHOICES,
@@ -3049,7 +3260,7 @@ class CourseOfferingDialog(tk.Toplevel):
         ).grid(row=2, column=1, sticky="w", padx=10)
 
         tk.Label(form, text="สถานะ", bg=BG, font=FONT_B).grid(row=3, column=0, sticky="w", pady=7)
-        self.status_var = tk.StringVar(value="เปิดสอน")
+        self.status_var = tk.StringVar(value=status_init)
         ttk.Combobox(
             form, textvariable=self.status_var,
             values=list(self.STATUS_LABELS.keys()),
@@ -3377,6 +3588,8 @@ class PLOManagerDialog(tk.Toplevel):
                            lambda e: self.btn_del_plo.config(
                                state="normal" if self.plo_tree.selection() else "disabled"))
         self.plo_tree.bind("<Double-1>", self._edit_row)
+        self.plo_tree.bind("<Return>",   self._edit_row)
+        self.plo_tree.bind("<Delete>",   lambda e: self._del_row())
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.plo_tree.yview)
         self.plo_tree.configure(yscrollcommand=vsb.set)
         self.plo_tree.pack(side="left", fill="both", expand=True)
@@ -3596,6 +3809,8 @@ class CourseCLOEditor(tk.Toplevel):
                            lambda e: self.btn_del_clo.config(
                                state="normal" if self.clo_tree.selection() else "disabled"))
         self.clo_tree.bind("<Double-1>", self._edit_clo)
+        self.clo_tree.bind("<Return>",   self._edit_clo)
+        self.clo_tree.bind("<Delete>",   lambda e: self._del_clo())
         vsb = ttk.Scrollbar(tf, orient="vertical", command=self.clo_tree.yview)
         self.clo_tree.configure(yscrollcommand=vsb.set)
         self.clo_tree.pack(side="left", fill="both", expand=True)
@@ -3685,6 +3900,8 @@ class CourseCLOEditor(tk.Toplevel):
                             lambda e: self.btn_del_asmt.config(
                                 state="normal" if self.asmt_tree.selection() else "disabled"))
         self.asmt_tree.bind("<Double-1>", self._edit_asmt)
+        self.asmt_tree.bind("<Return>",   self._edit_asmt)
+        self.asmt_tree.bind("<Delete>",   lambda e: self._del_asmt())
         vsb = ttk.Scrollbar(tf, orient="vertical", command=self.asmt_tree.yview)
         self.asmt_tree.configure(yscrollcommand=vsb.set)
         self.asmt_tree.pack(side="left", fill="both", expand=True)
@@ -4227,6 +4444,8 @@ class CourseTeachingPlanDialog(tk.Toplevel):
         self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 4))
         vsb.pack(side="left", fill="y", pady=(0, 4))
         self.tree.bind("<Double-1>", lambda e: self._edit_row())
+        self.tree.bind("<Return>",   lambda e: self._edit_row())
+        self.tree.bind("<Delete>",   lambda e: self._del_row())
 
         hint = tk.Label(
             self,
@@ -4514,6 +4733,8 @@ class CourseResourcesDialog(tk.Toplevel):
         self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 4))
         vsb.pack(side="left", fill="y", pady=(0, 4))
         self.tree.bind("<Double-1>", lambda e: self._edit_row())
+        self.tree.bind("<Return>",   lambda e: self._edit_row())
+        self.tree.bind("<Delete>",   lambda e: self._del_row())
 
         btn_row = tk.Frame(self, bg=BG, pady=8)
         btn_row.pack(fill="x", padx=10)
@@ -4729,6 +4950,8 @@ class TQF3StaffDialog(tk.Toplevel):
         self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 4))
         vsb.pack(side="left", fill="y", pady=(0, 4))
         self.tree.bind("<Double-1>", lambda e: self._edit_person())
+        self.tree.bind("<Return>",   lambda e: self._edit_person())
+        self.tree.bind("<Delete>",   lambda e: self._del_person())
 
         btn_row = tk.Frame(self, bg=BG, pady=8)
         btn_row.pack(fill="x", padx=10)
@@ -4959,6 +5182,8 @@ class LLOEditorDialog(tk.Toplevel):
                              lambda e: self._btn_del_llo.config(
                                  state="normal" if self._llo_tree.selection() else "disabled"))
         self._llo_tree.bind("<Double-1>", lambda e: self._edit_llo())
+        self._llo_tree.bind("<Return>",   lambda e: self._edit_llo())
+        self._llo_tree.bind("<Delete>",   lambda e: self._del_llo())
         self._refresh_llo_tree()
 
     def _refresh_llo_tree(self):
@@ -5167,6 +5392,8 @@ class OfferingInstructorsDialog(tk.Toplevel):
         vsb.pack(side="right", fill="y", pady=4, padx=(0, 4))
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         self._tree.bind("<Double-1>", lambda e: self._edit())
+        self._tree.bind("<Return>",   lambda e: self._edit())
+        self._tree.bind("<Delete>",   lambda e: self._del())
         self._refresh_tree()
 
         btn_f = tk.Frame(self, bg=BG)
