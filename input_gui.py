@@ -287,63 +287,88 @@ class TQFApp(tk.Tk):
     # ══════════════════════════════════════════════════
     # TAB 1: รายวิชาในระบบ
     # ══════════════════════════════════════════════════
+    # ── state chip colors ─────────────────────────────────
+    _STATE_BG: dict = {
+        "not_started":     "#F5F5F5",
+        "in_progress":     "#E3F2FD",
+        "ready_for_tqf3":  "#E1F5FE",
+        "tqf3_generated":  "#E8F5E9",
+        "teaching":        "#FFF3E0",
+        "grades_imported": "#F3E5F5",
+        "ready_for_tqf5":  "#E0F7FA",
+        "tqf5_generated":  "#DCEDC8",
+        "term_closed":     "#ECEFF1",
+    }
+    _STATE_CHIP: dict = {
+        "not_started":     "—  ยังไม่เริ่ม",
+        "in_progress":     "🔵  กำลังดำเนินการ",
+        "ready_for_tqf3":  "🔷  พร้อม มคอ.3",
+        "tqf3_generated":  "🟢  มคอ.3 สร้างแล้ว",
+        "teaching":        "🟡  กำลังสอน",
+        "grades_imported": "🟣  นำเข้าเกรดแล้ว",
+        "ready_for_tqf5":  "🔷  พร้อม มคอ.5",
+        "tqf5_generated":  "✅  มคอ.5 สร้างแล้ว",
+        "term_closed":     "🔒  ปิดภาคเรียน",
+    }
+
     def _build_tab_courses(self):
         tab = self.tab_courses
 
-        # ── Toolbar ──────────────────────────────────
+        # shared vars (also used by Tab 2 offering filter)
         self.curriculum_var    = tk.StringVar(value="ทั้งหมด")
         self.cat_term_sem_var  = tk.StringVar(value="1")
         self.cat_term_year_var = tk.StringVar(value="2569")
-        self.t1_sem_var  = tk.StringVar(value="ทั้งหมด")
-        self.t1_year_var = tk.StringVar(value="ทั้งหมด")
+        self.t1_sem_var  = tk.StringVar(value="1")
+        self.t1_year_var = tk.StringVar(value="2568")
 
         toolbar = tk.Frame(tab, bg=BG)
         toolbar.pack(fill="x", padx=16, pady=(12, 4))
 
-        # ── แถว 1: ชื่อ + filter หลักสูตร ───────────
+        # ── แถว 1: ชื่อ + filter ภาค/ปี + รีเฟรช ──────
         top_row = tk.Frame(toolbar, bg=BG)
         top_row.pack(fill="x")
-        tk.Label(top_row, text="รายวิชาในระบบ",
+        tk.Label(top_row, text="แดชบอร์ดภาคการศึกษา",
                  bg=BG, font=FONT_H, fg=BLUE_DARK).pack(side="left")
 
-        filter_frame = tk.Frame(top_row, bg=BG)
-        filter_frame.pack(side="right")
-        tk.Label(filter_frame, text="หลักสูตร:", bg=BG, font=FONT_SM).pack(side="left")
-        self.curriculum_combo = ttk.Combobox(
-            filter_frame, textvariable=self.curriculum_var,
-            values=["ทั้งหมด"], width=8, state="readonly")
-        self.curriculum_combo.pack(side="left", padx=(4, 8))
-        self.curriculum_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_courses())
-        tk.Button(filter_frame, text="รีเฟรช", bg=BLUE, fg=WHITE,
-                  font=FONT_B, relief="flat", padx=12, pady=4,
-                  cursor="hand2", activebackground=BLUE_DARK, activeforeground=WHITE,
-                  command=self._refresh_courses).pack(side="left")
-
-        # ── แถว 2: filter ภาค/ปี ────────────────────
-        sem_row = tk.Frame(toolbar, bg=BG)
-        sem_row.pack(fill="x", pady=(6, 0))
-        tk.Label(sem_row, text="ภาคเรียน:", bg=BG, font=FONT_SM,
-                 fg=BLUE_DARK).pack(side="left")
-        t1_sem_cb = ttk.Combobox(sem_row, textvariable=self.t1_sem_var,
+        right_filter = tk.Frame(top_row, bg=BG)
+        right_filter.pack(side="right")
+        tk.Label(right_filter, text="ภาคเรียน:", bg=BG, font=FONT_SM).pack(side="left")
+        t1_sem_cb = ttk.Combobox(right_filter, textvariable=self.t1_sem_var,
                                   values=["ทั้งหมด", "1", "2", "3"],
                                   width=6, state="readonly")
-        t1_sem_cb.pack(side="left", padx=(4, 12))
+        t1_sem_cb.pack(side="left", padx=(4, 10))
         t1_sem_cb.bind("<<ComboboxSelected>>", lambda e: self._refresh_courses())
 
-        tk.Label(sem_row, text="ปีการศึกษา:", bg=BG, font=FONT_SM,
-                 fg=BLUE_DARK).pack(side="left")
-        t1_year_ent = tk.Entry(sem_row, textvariable=self.t1_year_var,
-                                  width=9, font=FONT, relief="solid", bd=1)
-        t1_year_ent.pack(side="left", padx=(4, 0))
-        t1_year_ent.bind("<Return>", lambda e: self._refresh_courses())
+        tk.Label(right_filter, text="ปีการศึกษา:", bg=BG, font=FONT_SM).pack(side="left")
+        t1_year_ent = tk.Entry(right_filter, textvariable=self.t1_year_var,
+                                width=8, font=FONT, relief="solid", bd=1)
+        t1_year_ent.pack(side="left", padx=(4, 10))
+        t1_year_ent.bind("<Return>",   lambda e: self._refresh_courses())
         t1_year_ent.bind("<FocusOut>", lambda e: self._refresh_courses())
 
-        tk.Label(sem_row, text="  (Enter หรือคลิกที่อื่นเพื่อกรอง)",
-                 bg=BG, fg=GRAY, font=FONT_SM).pack(side="left")
+        tk.Button(right_filter, text="รีเฟรช", bg=BLUE, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=12, pady=4, cursor="hand2",
+                  activebackground=BLUE_DARK, activeforeground=WHITE,
+                  command=self._refresh_courses).pack(side="left")
 
-        # ── แถว 3: ปุ่มบริบทตามสถานะที่เลือก ─────────
+        # ── แถว 2: ปุ่มหลัก + ปุ่มบริบท ───────────────
         action_row = tk.Frame(toolbar, bg=BG)
         action_row.pack(fill="x", pady=(8, 0))
+
+        tk.Button(action_row, text="➕  เปิดรายวิชา", bg=GREEN, fg=WHITE,
+                  font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
+                  activebackground="#0B5E0B", activeforeground=WHITE,
+                  command=self._open_bulk_dialog).pack(side="left", padx=(0, 6))
+
+        self.btn_change_state = tk.Button(
+            action_row, text="🔄  เปลี่ยนสถานะ", bg="#546E7A", fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
+            state="disabled", command=self._transition_state_dialog)
+        self.btn_change_state.pack(side="left", padx=(0, 12))
+
+        # separator
+        tk.Frame(action_row, bg="#D1D5DB", width=1, height=22).pack(
+            side="left", padx=(0, 12), fill="y")
 
         self.btn_tqf3_new = tk.Button(
             action_row, text="📝  กรอก มคอ.3", bg="#0277BD", fg=WHITE,
@@ -365,14 +390,14 @@ class TQFApp(tk.Tk):
         self.btn_gen.pack(side="left", padx=(0, 6))
 
         self.btn_edit = tk.Button(
-            action_row, text="✏️  แก้ไขข้อมูล", bg="#2E7D32", fg=WHITE,
+            action_row, text="✏️  แก้ไข", bg="#2E7D32", fg=WHITE,
             font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
             activebackground="#1B5E20", activeforeground=WHITE,
             state="disabled", command=self._edit_course)
         self.btn_edit.pack(side="left", padx=(0, 8))
 
         self.t1_hint = tk.Label(
-            action_row, text="← เลือกวิชาจากตารางเพื่อดูตัวเลือก",
+            action_row, text="← เลือกรายวิชาจากตารางเพื่อดูตัวเลือก",
             bg=BG, fg=GRAY, font=FONT_SM, anchor="w")
         self.t1_hint.pack(side="left")
 
@@ -393,29 +418,33 @@ class TQFApp(tk.Tk):
         style.map("Treeview", background=[("selected", BLUE_LITE)],
                   foreground=[("selected", BLUE_DARK)])
 
-        cols = ("code","name","curriculum","sem_year","tqf3","grade","students","status","tqf3_id","course_id")
+        # columns: visible + 3 hidden (offering_id, course_id, tqf3_id, state)
+        cols = ("code","name","instructor","sem_year","status",
+                "tqf3","students","curriculum",
+                "offering_id","course_id","tqf3_id","state")
         self.tree = ttk.Treeview(top_frame, columns=cols, show="headings",
                                  selectmode="browse", height=10)
         heads = {
-            "code":      ("รหัสวิชา",  90, "center"),
-            "name":      ("ชื่อวิชา", 200, "w"),
-            "curriculum":("หลักสูตร",  70, "center"),
-            "sem_year":  ("ภาค/ปี",    70, "center"),
-            "tqf3":      ("มคอ.3",     60, "center"),
-            "grade":     ("เกรด",      60, "center"),
-            "students":  ("นักศึกษา",  75, "center"),
-            "status":    ("สถานะ",    130, "center"),
-            "tqf3_id":   ("",           0, "center"),
-            "course_id": ("",           0, "center"),
+            "code":        ("รหัสวิชา",  90,  "center"),
+            "name":        ("ชื่อวิชา", 200,  "w"),
+            "instructor":  ("ผู้สอน",   110,  "w"),
+            "sem_year":    ("ภาค/ปี",    70,  "center"),
+            "status":      ("สถานะ",    160,  "w"),
+            "tqf3":        ("มคอ.3",     60,  "center"),
+            "students":    ("นศ.",        55,  "center"),
+            "curriculum":  ("หลักสูตร",  70,  "center"),
+            "offering_id": ("",           0,  "center"),
+            "course_id":   ("",           0,  "center"),
+            "tqf3_id":     ("",           0,  "center"),
+            "state":       ("",           0,  "center"),
         }
-        hidden = {"tqf3_id", "course_id"}
+        hidden = {"offering_id", "course_id", "tqf3_id", "state"}
         for col, (heading, width, anchor) in heads.items():
             self.tree.heading(col, text=heading)
             self.tree.column(col, width=width, anchor=anchor,
-                             minwidth=0 if col in hidden else 50)
-        self.tree.tag_configure("complete",  background="#E8F5E9")
-        self.tree.tag_configure("partial",   background="#FFF8E1")
-        self.tree.tag_configure("gradeonly", background="#FFF3E0")
+                             minwidth=0 if col in hidden else 40)
+        for state, bg in self._STATE_BG.items():
+            self.tree.tag_configure(f"s_{state}", background=bg)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self.tree.bind("<Double-1>", self._on_tree_double_click)
 
@@ -506,159 +535,116 @@ class TQFApp(tk.Tk):
             self.stu_text.pack(side="left", fill="both", expand=True)
 
     def _refresh_courses(self):
-        """โหลดข้อมูลรายวิชาจาก DB มาแสดงใน Treeview พร้อม filter ภาค/ปี"""
+        """โหลด offerings จาก DB ผ่าน get_term_dashboard() แสดงพร้อม state chip"""
         for item in self.tree.get_children():
             self.tree.delete(item)
         try:
             import database as db
             db.init_db()
-            conn = sqlite3.connect(db.DB_PATH)
-            conn.row_factory = sqlite3.Row
 
-            # อัปเดต dropdown หลักสูตร
-            curricula = conn.execute("SELECT version, name_th FROM curricula ORDER BY version").fetchall()
-            curr_labels = ["ทั้งหมด"] + [f"หลักสูตร {r['version']}" for r in curricula]
-            self.curriculum_combo["values"] = curr_labels
+            sem_val  = self.t1_sem_var.get()
+            year_val = self.t1_year_var.get()
+            sem  = int(sem_val)  if sem_val  not in ("ทั้งหมด", "") else None
+            try:
+                year = int(year_val) if year_val not in ("ทั้งหมด", "") else None
+            except ValueError:
+                year = None
 
-            # ── build WHERE clauses ────────────────────────────────────────
-            conditions = ["1=1"]
-            params: list = []
+            rows = db.get_term_dashboard(semester=sem, year=year)
 
-            cur_filter = self.curriculum_var.get()
-            if cur_filter != "ทั้งหมด":
-                ver = cur_filter.replace("หลักสูตร ", "").strip()
-                conditions.append("cu.version = ?")
-                params.append(ver)
-
-            sem_filter = getattr(self, "t1_sem_var", None)
-            if sem_filter and sem_filter.get() not in ("ทั้งหมด", ""):
-                conditions.append("t.semester = ?")
-                params.append(sem_filter.get())
-
-            year_filter = getattr(self, "t1_year_var", None)
-            if year_filter and year_filter.get() not in ("ทั้งหมด", ""):
-                try:
-                    conditions.append("t.year = ?")
-                    params.append(int(year_filter.get()))
-                except ValueError:
-                    pass  # ไม่ใช่ตัวเลข — ข้ามไป
-
-            where_clause = " AND ".join(conditions)
-
-            # LEFT JOIN tqf3 → แสดงวิชาทุกวิชา แม้ยังไม่มี มคอ.3
-            # เมื่อ filter ภาค/ปี → ใช้ INNER JOIN tqf3 แทน ไม่งั้นวิชาไม่มี tqf3 จะยังโผล่
-            join_type = "LEFT" if (sem_filter is None or sem_filter.get() in ("ทั้งหมด", "")) \
-                               and (year_filter is None or year_filter.get() in ("ทั้งหมด", "")) \
-                        else "INNER"
-
-            rows = conn.execute(f"""
-                SELECT c.id AS course_id, c.code, c.name_th,
-                       c.course_type,
-                       COALESCE(cu.version, '?') AS cur_ver,
-                       t.semester, t.year,
-                       t.source_file,
-                       COALESCE(t.source_type, '') AS source_type,
-                       t.id AS tqf3_id,
-                       COALESCE(t.is_special, 0) AS is_special,
-                       COALESCE(t5.registered_count, 0) AS students,
-                       COALESCE(t5.remaining_count, 0)  AS remaining,
-                       COALESCE(t5.withdrawn_count, 0)  AS withdrawn,
-                       COALESCE((SELECT COUNT(*) FROM clos cl WHERE cl.tqf3_id=t.id), 0) AS clo_count,
-                       CASE WHEN t5.id IS NOT NULL THEN 1 ELSE 0 END AS has_grade
-                FROM courses c
-                LEFT JOIN curricula cu ON cu.id = c.curriculum_id
-                {join_type} JOIN tqf3 t ON t.course_id = c.id
-                LEFT JOIN tqf5 t5 ON t5.tqf3_id = t.id
-                WHERE {where_clause}
-                ORDER BY cu.version, c.course_type, c.code, t.year DESC, t.semester DESC
-            """, params).fetchall()
-            conn.close()
+            # counter for status bar
+            total   = len(rows)
+            done3   = sum(1 for r in rows if r["has_tqf3"])
+            done5   = sum(1 for r in rows if r["has_tqf5"])
+            closed  = sum(1 for r in rows if r["state"] == "term_closed")
 
             for r in rows:
-                has_tqf3  = bool((r["source_file"] or r["source_type"] == "generated") and r["clo_count"] > 0)
-                has_grade = bool(r["has_grade"] and r["students"] > 0)
+                state     = r["state"] or "not_started"
+                chip      = self._STATE_CHIP.get(state, state)
+                tqf3_icon = "✅" if r["has_tqf3"] and r["clo_count"] > 0 else (
+                            "⏳" if r["has_tqf3"] else "—")
+                stu_label = str(r["enrolled_count"]) if r["enrolled_count"] else "—"
+                sem_year  = f"{r['semester']}/{r['year']}"
+                if r["is_special"]:
+                    sem_year = f"★{sem_year}"
+                instructor = r["instructor_main"] or "—"
 
-                tqf3_icon  = "✅" if has_tqf3  else "—"
-                grade_icon = "✅" if has_grade else "—"
-                is_special = bool(r["is_special"])
-                sem_year_base = f"{r['semester']}/{r['year']}" if r["semester"] else "—"
-                sem_year = f"★{sem_year_base}" if is_special else sem_year_base
-
-                sp_label = "  [พิเศษ]" if is_special else ""
-                if has_tqf3 and has_grade:
-                    status, tag = f"✅ พร้อมสร้าง มคอ.5{sp_label}", "complete"
-                elif has_tqf3:
-                    status, tag = f"⏳ รอนำเข้าเกรด{sp_label}", "partial"
-                elif has_grade:
-                    status, tag = f"⏳ รอนำเข้า มคอ.3{sp_label}", "gradeonly"
-                else:
-                    status, tag = "— ยังไม่มีข้อมูล", ""
-
-                self.tree.insert("", "end", tags=(tag,), values=(
-                    r["code"],
-                    r["name_th"] or "(ยังไม่มีชื่อ)",
-                    r["cur_ver"],
+                self.tree.insert("", "end", tags=(f"s_{state}",), values=(
+                    r["course_code"],
+                    r["course_name"] or "(ยังไม่มีชื่อ)",
+                    instructor,
                     sem_year,
-                    tqf3_icon,
-                    grade_icon,
-                    f"{r['students']} คน" if r["students"] else "—",
-                    status,
-                    r["tqf3_id"] or "",   # hidden tqf3_id  [index 8]
-                    r["course_id"] or "",  # hidden course_id [index 9]
+                    chip,               # status column
+                    tqf3_icon,          # มคอ.3 column
+                    stu_label,          # นศ. column
+                    r["curriculum_version"] or "—",
+                    r["offering_id"],   # hidden [index 8]
+                    r["course_id"],     # hidden [index 9]
+                    r["tqf3_id"] or "", # hidden [index 10]
+                    state,              # hidden [index 11]
                 ))
 
-            total = len(rows)
-            has_data = sum(1 for r in rows if r["source_file"] or r["source_type"] == "generated")
-            ready    = sum(1 for r in rows
-                           if (r["source_file"] or r["source_type"] == "generated") and r["clo_count"] > 0
-                           and r["has_grade"] and r["students"] > 0)
+            sem_txt  = f"ภาค {sem}"  if sem  else "ทุกภาค"
+            year_txt = f"ปี {year}"  if year else "ทุกปี"
             self.status_var.set(
-                f"รายวิชา {total} วิชา  |  มีข้อมูล มคอ.3: {has_data}  |  พร้อมสร้าง มคอ.5: {ready}")
+                f"{sem_txt} {year_txt}  |  offering {total}  |  "
+                f"มคอ.3: {done3}  |  มคอ.5: {done5}  |  ปิดแล้ว: {closed}")
 
         except Exception as e:
+            import traceback
             self.status_var.set(f"❌ โหลดข้อมูลไม่ได้: {e}")
+            print(traceback.format_exc())
 
     def _on_tree_select(self, event=None):
         """คลิกเลือกแถว → แสดงปุ่มตามสถานะ + โหลดรายละเอียด"""
         sel = self.tree.selection()
         if not sel:
-            for b in (self.btn_tqf3_new, self.btn_import_grade,
-                      self.btn_gen, self.btn_edit):
+            for b in (self.btn_change_state, self.btn_tqf3_new,
+                      self.btn_import_grade, self.btn_gen, self.btn_edit):
                 b.config(state="disabled")
-            self.t1_hint.config(text="<- เลือกวิชาจากตารางเพื่อดูตัวเลือก")
+            self.t1_hint.config(text="← เลือกรายวิชาจากตารางเพื่อดูตัวเลือก")
             self._clear_detail()
             return
 
-        vals      = self.tree.item(sel[0], "values")
-        status    = vals[7] if len(vals) > 7 else ""
-        tqf3_id   = vals[8] if len(vals) > 8 else ""
-        course_id = vals[9] if len(vals) > 9 else ""
+        vals        = self.tree.item(sel[0], "values")
+        offering_id = vals[8]  if len(vals) > 8  else ""
+        course_id   = vals[9]  if len(vals) > 9  else ""
+        tqf3_id     = vals[10] if len(vals) > 10 else ""
+        state       = vals[11] if len(vals) > 11 else "not_started"
+        tqf3_icon   = vals[5]  if len(vals) > 5  else ""
 
-        has_tqf3  = bool(tqf3_id)
-        has_grade = "✅" in (vals[5] if len(vals) > 5 else "")
+        has_tqf3    = bool(tqf3_id)
+        has_grade   = bool(tqf3_id)  # TQF5 inferred from state
+        from tqf_system.core.state_machine import allowed_next, TRANSITIONS
+        can_transition = bool(allowed_next(state))
 
-        # ── ปุ่มบริบทตามสถานะ ──────────────────────────────────────────
-        # กรอก มคอ.3: มีวิชาแต่ยังไม่มี มคอ.3
-        self.btn_tqf3_new.config(state="normal" if course_id else "disabled")
+        # ── เปลี่ยนสถานะ ──────────────────────────────────────────────
+        self.btn_change_state.config(state="normal" if can_transition and offering_id else "disabled")
 
-        # นำเข้าเกรด: มี มคอ.3 แล้ว แต่ยังไม่มีเกรด
-        self.btn_import_grade.config(state="normal" if has_tqf3 and not has_grade else "disabled")
-
-        # สร้าง มคอ.5: มีทั้ง มคอ.3 และเกรดแล้ว
-        self.btn_gen.config(state="normal" if has_tqf3 and has_grade else "disabled")
-
-        # แก้ไขข้อมูล: มีวิชาในระบบ
+        # ── ปุ่มบริบทตามสถานะ ─────────────────────────────────────────
+        self.btn_tqf3_new.config(state="normal" if offering_id else "disabled")
+        self.btn_import_grade.config(
+            state="normal" if has_tqf3 and state not in (
+                "grades_imported","ready_for_tqf5","tqf5_generated","term_closed") else "disabled")
+        self.btn_gen.config(
+            state="normal" if state in (
+                "grades_imported","ready_for_tqf5","tqf5_generated") else "disabled")
         self.btn_edit.config(state="normal" if course_id else "disabled")
 
-        # hint
+        # hint ตาม state
+        from tqf_system.core.state_machine import STATE_LABELS_TH
         hint_map = {
-            "— ยังไม่มีข้อมูล": "เลือก 'กรอก มคอ.3' เพื่อเริ่มต้น",
-            "⏳ รอนำเข้าเกรด": "มคอ.3 พร้อมแล้ว — กด 'นำเข้าเกรด' ต่อ",
-            "⏳ รอนำเข้า มคอ.3": "มีเกรดแล้ว — กด 'กรอก มคอ.3' เพื่อเพิ่ม",
+            "not_started":     "กด 'กรอก มคอ.3' เพื่อเริ่มกรอกข้อมูล หรือ 'เปลี่ยนสถานะ' เป็น กำลังดำเนินการ",
+            "in_progress":     "กำลังกรอกข้อมูล — เปลี่ยนสถานะเป็น 'พร้อม มคอ.3' เมื่อพร้อม",
+            "ready_for_tqf3":  "พร้อมสร้าง มคอ.3 — ไปที่ Tab ฐานข้อมูลหลักสูตร แล้วกด 'สร้าง มคอ.3'",
+            "tqf3_generated":  "มคอ.3 สร้างแล้ว — เปลี่ยนสถานะเป็น 'กำลังสอน' เมื่อเริ่มสอน",
+            "teaching":        "กำลังสอน — กด 'นำเข้าเกรด' หลังจบภาคการศึกษา",
+            "grades_imported": "นำเข้าเกรดแล้ว — กด 'สร้าง มคอ.5' หรือเปลี่ยนสถานะ",
+            "ready_for_tqf5":  "พร้อมสร้าง มคอ.5 — กด 'สร้าง มคอ.5' ได้เลย",
+            "tqf5_generated":  "มคอ.5 สร้างแล้ว — เปลี่ยนสถานะเป็น 'ปิดภาคเรียน' เมื่อเสร็จสิ้น",
+            "term_closed":     "ปิดภาคเรียนแล้ว (สถานะสุดท้าย)",
         }
-        hint = next((v for k, v in hint_map.items() if k in status),
-                    "พร้อมสร้าง มคอ.5 แล้ว" if "พร้อมสร้าง" in status else "")
-        self.t1_hint.config(text=hint)
+        self.t1_hint.config(text=hint_map.get(state, ""))
 
         if tqf3_id:
             self._load_detail(int(tqf3_id), vals)
@@ -674,12 +660,12 @@ class TQFApp(tk.Tk):
         self.nb.select(self.tab_import)
 
     def _on_tree_double_click(self, event=None):
-        """Double-click → สลับไปแท็บ นักศึกษา"""
+        """Double-click → สลับไปแท็บ นักศึกษา (ถ้ามี tqf3_id)"""
         sel = self.tree.selection()
         if not sel:
             return
         vals = self.tree.item(sel[0], "values")
-        if vals[8] if len(vals) > 8 else "":
+        if vals[10] if len(vals) > 10 else "":   # tqf3_id at index 10
             self.detail_tab_var.set("students")
             self._switch_detail_tab()
 
@@ -785,8 +771,8 @@ class TQFApp(tk.Tk):
         if not sel:
             return
         vals = self.tree.item(sel[0], "values")
-        course_id = vals[9] if len(vals) > 9 else ""
-        tqf3_id   = vals[8] if len(vals) > 8 else ""
+        course_id = vals[9]  if len(vals) > 9  else ""   # index updated
+        tqf3_id   = vals[10] if len(vals) > 10 else ""   # index updated
         if not course_id:
             return
         try:
@@ -840,13 +826,223 @@ class TQFApp(tk.Tk):
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=self)
 
+    # ── Phase 3: State-transition dialog ─────────────────────────────
+    def _transition_state_dialog(self):
+        """เปิด dialog เปลี่ยนสถานะของ offering ที่เลือก"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        vals        = self.tree.item(sel[0], "values")
+        offering_id = vals[8]  if len(vals) > 8  else ""
+        course_code = vals[0]
+        state       = vals[11] if len(vals) > 11 else "not_started"
+        if not offering_id:
+            return
+
+        from tqf_system.core.state_machine import (
+            allowed_next, STATE_LABELS_TH, IllegalTransition)
+
+        next_states = allowed_next(state)
+        if not next_states:
+            messagebox.showinfo("สถานะสุดท้าย",
+                f"รายวิชา {course_code} อยู่ในสถานะ '{STATE_LABELS_TH.get(state, state)}'\n"
+                "ซึ่งเป็นสถานะสุดท้าย ไม่สามารถเปลี่ยนต่อไปได้อีก", parent=self)
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title(f"เปลี่ยนสถานะ — {course_code}")
+        dlg.configure(bg=BG)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(400, 0)
+
+        tk.Label(dlg, text=f"สถานะปัจจุบัน: {STATE_LABELS_TH.get(state, state)}",
+                 bg=BG, font=FONT_B, fg=BLUE_DARK).pack(padx=20, pady=(16, 8), anchor="w")
+        tk.Label(dlg, text="เลือกสถานะถัดไป:",
+                 bg=BG, font=FONT_SM).pack(padx=20, anchor="w")
+
+        to_var = tk.StringVar(value=next_states[0])
+        for ns in next_states:
+            tk.Radiobutton(dlg, text=STATE_LABELS_TH.get(ns, ns),
+                           variable=to_var, value=ns,
+                           bg=BG, font=FONT, activebackground=BG,
+                           selectcolor=WHITE).pack(padx=30, anchor="w", pady=2)
+
+        tk.Label(dlg, text="บันทึกเหตุผล (ไม่บังคับ):",
+                 bg=BG, font=FONT_SM).pack(padx=20, pady=(12, 4), anchor="w")
+        note_var = tk.StringVar()
+        tk.Entry(dlg, textvariable=note_var, font=FONT,
+                 relief="solid", bd=1).pack(padx=20, fill="x")
+
+        def do_save():
+            import database as db; db.init_db()
+            try:
+                db.transition_offering_state(
+                    int(offering_id), to_var.get(), note_var.get())
+                dlg.destroy()
+                self._refresh_courses()
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", str(e), parent=dlg)
+
+        _dialog_btn_bar(dlg, do_save, dlg.destroy)
+        dlg.wait_window()
+
+    # ── Phase 3: Bulk open-offerings dialog ──────────────────────────
+    def _open_bulk_dialog(self):
+        """Dialog เลือกวิชาจากหลักสูตรแล้วเปิดการสอนพร้อมกัน"""
+        import database as db; db.init_db()
+        conn = sqlite3.connect(db.DB_PATH)
+        conn.row_factory = sqlite3.Row
+        curricula = conn.execute(
+            "SELECT id, version, name_th FROM curricula ORDER BY version"
+        ).fetchall()
+        conn.close()
+
+        if not curricula:
+            messagebox.showinfo("ไม่มีข้อมูล",
+                "ยังไม่มีหลักสูตรในระบบ — กรุณาเพิ่มหลักสูตรก่อน", parent=self)
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("เปิดรายวิชาจากหลักสูตร")
+        dlg.configure(bg=BG)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(520, 0)
+
+        # ── form ──────────────────────────────────────
+        form = tk.Frame(dlg, bg=BG)
+        form.pack(fill="x", padx=20, pady=(16, 8))
+
+        tk.Label(form, text="หลักสูตร:", bg=BG, font=FONT_SM).grid(
+            row=0, column=0, sticky="w", pady=4)
+        cur_var = tk.StringVar(value=curricula[0]["version"])
+        cur_cb  = ttk.Combobox(form, textvariable=cur_var,
+                                values=[f"{c['version']} — {c['name_th']}" for c in curricula],
+                                width=28, state="readonly")
+        cur_cb.grid(row=0, column=1, sticky="w", padx=8)
+
+        tk.Label(form, text="ภาคเรียน:", bg=BG, font=FONT_SM).grid(
+            row=1, column=0, sticky="w", pady=4)
+        sem_var = tk.StringVar(value=self.t1_sem_var.get()
+                               if self.t1_sem_var.get() not in ("ทั้งหมด","") else "1")
+        sem_cb  = ttk.Combobox(form, textvariable=sem_var,
+                                values=["1","2","3"], width=5, state="readonly")
+        sem_cb.grid(row=1, column=1, sticky="w", padx=8)
+
+        tk.Label(form, text="ปีการศึกษา:", bg=BG, font=FONT_SM).grid(
+            row=2, column=0, sticky="w", pady=4)
+        year_var = tk.StringVar(value=self.t1_year_var.get()
+                                if self.t1_year_var.get() not in ("ทั้งหมด","") else "2568")
+        tk.Entry(form, textvariable=year_var, width=10,
+                 font=FONT, relief="solid", bd=1).grid(row=2, column=1, sticky="w", padx=8)
+
+        tk.Label(form, text="กลุ่มเรียน:", bg=BG, font=FONT_SM).grid(
+            row=3, column=0, sticky="w", pady=4)
+        sec_var = tk.StringVar(value="01")
+        tk.Entry(form, textvariable=sec_var, width=10,
+                 font=FONT, relief="solid", bd=1).grid(row=3, column=1, sticky="w", padx=8)
+
+        # ── course checklist ──────────────────────────
+        tk.Label(dlg, text="รายวิชาที่จะเปิด (เลือกทั้งหมดที่ต้องการ):",
+                 bg=BG, font=FONT_B, fg=BLUE_DARK).pack(padx=20, anchor="w", pady=(4, 2))
+
+        list_frame  = _ScrollableBody(dlg)
+        list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 4))
+        list_frame.configure(height=200)
+
+        check_vars: dict[int, tk.BooleanVar] = {}
+
+        def _reload_courses(*_):
+            for w in list_frame.inner.winfo_children():
+                w.destroy()
+            check_vars.clear()
+            ver = cur_var.get().split(" — ")[0].strip()
+            try:
+                conn2 = sqlite3.connect(db.DB_PATH)
+                conn2.row_factory = sqlite3.Row
+                cur_row = conn2.execute(
+                    "SELECT id FROM curricula WHERE version=?", (ver,)
+                ).fetchone()
+                if not cur_row:
+                    conn2.close()
+                    return
+                courses = conn2.execute(
+                    "SELECT id, code, name_th FROM courses "
+                    "WHERE curriculum_id=? ORDER BY code", (cur_row["id"],)
+                ).fetchall()
+                conn2.close()
+            except Exception:
+                return
+            all_var = tk.BooleanVar(value=True)
+
+            def toggle_all():
+                v = all_var.get()
+                for bv in check_vars.values():
+                    bv.set(v)
+
+            tk.Checkbutton(list_frame.inner, text="เลือกทั้งหมด",
+                           variable=all_var, command=toggle_all,
+                           bg=BG, font=FONT_B, activebackground=BG).pack(anchor="w")
+            tk.Frame(list_frame.inner, bg="#D1D5DB", height=1).pack(fill="x", pady=4)
+            for crs in courses:
+                bv = tk.BooleanVar(value=True)
+                check_vars[crs["id"]] = bv
+                tk.Checkbutton(list_frame.inner,
+                               text=f"{crs['code']}  {crs['name_th']}",
+                               variable=bv, bg=BG, font=FONT,
+                               activebackground=BG).pack(anchor="w")
+
+        cur_cb.bind("<<ComboboxSelected>>", _reload_courses)
+        _reload_courses()
+
+        # ── action buttons ────────────────────────────
+        def do_open():
+            ver = cur_var.get().split(" — ")[0].strip()
+            try:
+                sem  = int(sem_var.get())
+                year = int(year_var.get())
+            except ValueError:
+                messagebox.showerror("ข้อผิดพลาด",
+                    "ภาคเรียน/ปีการศึกษาต้องเป็นตัวเลข", parent=dlg)
+                return
+            sec = sec_var.get().strip() or "01"
+            selected_ids = [cid for cid, bv in check_vars.items() if bv.get()]
+            if not selected_ids:
+                messagebox.showwarning("ไม่มีรายวิชา",
+                    "กรุณาเลือกอย่างน้อย 1 รายวิชา", parent=dlg)
+                return
+            try:
+                conn3 = sqlite3.connect(db.DB_PATH)
+                conn3.row_factory = sqlite3.Row
+                cur_row = conn3.execute(
+                    "SELECT id FROM curricula WHERE version=?", (ver,)
+                ).fetchone()
+                conn3.close()
+                if not cur_row:
+                    messagebox.showerror("ข้อผิดพลาด", "ไม่พบหลักสูตร", parent=dlg)
+                    return
+                created = db.bulk_open_offerings(
+                    cur_row["id"], selected_ids, sem, year, sec)
+                messagebox.showinfo("สำเร็จ",
+                    f"เปิดรายวิชาใหม่ {created} วิชา\n"
+                    f"(ที่มีอยู่แล้วถูกข้ามไป {len(selected_ids)-created} วิชา)",
+                    parent=dlg)
+                dlg.destroy()
+                self._refresh_courses()
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", str(e), parent=dlg)
+
+        _dialog_btn_bar(dlg, do_open, dlg.destroy, save_text="➕  เปิดรายวิชาที่เลือก")
+        dlg.wait_window()
+
     def _generate_tqf5(self):
         """สร้างไฟล์ มคอ.5 จากวิชาที่เลือกใน Treeview"""
         sel = self.tree.selection()
         if not sel:
             return
         vals = self.tree.item(sel[0], "values")
-        tqf3_id = vals[8] if len(vals) > 8 else ""
+        tqf3_id = vals[10] if len(vals) > 10 else ""   # index updated
         course_code = vals[0]
         if not tqf3_id:
             messagebox.showwarning("ไม่มีข้อมูล", "ไม่พบ มคอ.3 สำหรับวิชานี้", parent=self)

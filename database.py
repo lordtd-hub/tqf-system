@@ -1833,6 +1833,208 @@ def replace_offering_instructors(offering_id: int, instructors: list) -> None:
             )
 
 
+# ── Offering State Machine helpers ────────────────────────────────────────────
+
+def get_offering_state(offering_id: int) -> str:
+    """Return current state string for *offering_id*, or 'not_started' if missing."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT state FROM offering_status WHERE offering_id=?", (offering_id,)
+        ).fetchone()
+    return row["state"] if row else "not_started"
+
+
+def ensure_offering_status(offering_id: int) -> None:
+    """Create offering_status row for *offering_id* if it does not exist yet.
+
+    Infers initial state from existing tqf3 / clos / tqf5 data.
+    """
+    with get_conn() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM offering_status WHERE offering_id=?", (offering_id,)
+        ).fetchone()
+        if exists:
+            return
+        # Infer from data
+        t3 = conn.execute(
+            "SELECT id FROM tqf3 WHERE offering_id=?", (offering_id,)
+        ).fetchone()
+        if t3:
+            clo_count = conn.execute(
+                "SELECT COUNT(*) FROM clos WHERE tqf3_id=?", (t3["id"],)
+            ).fetchone()[0]
+            t5 = conn.execute(
+                "SELECT id FROM tqf5 WHERE tqf3_id=?", (t3["id"],)
+            ).fetchone()
+            if t5:
+                state = "tqf5_generated"
+            elif clo_count > 0:
+                state = "tqf3_generated"
+            else:
+                state = "in_progress"
+        else:
+            state = "not_started"
+        conn.execute(
+            "INSERT OR IGNORE INTO offering_status (offering_id, state) VALUES (?,?)",
+            (offering_id, state),
+        )
+
+
+def transition_offering_state(
+    offering_id: int,
+    to_state: str,
+    note: str = "",
+    changed_by: str = "",
+) -> None:
+    """Transition *offering_id* to *to_state*.
+
+    Validates the transition via state_machine.validate_transition.
+    Writes both offering_status and offering_status_history.
+    Raises tqf_system.core.state_machine.IllegalTransition on invalid move.
+    """
+    import os
+    from tqf_system.core.state_machine import validate_transition
+
+    if not changed_by:
+        try:
+            changed_by = os.getlogin()
+        except Exception:
+            changed_by = "system"
+
+    ensure_offering_status(offering_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT state FROM offering_status WHERE offering_id=?", (offering_id,)
+        ).fetchone()
+        from_state = row["state"] if row else "not_started"
+
+        validate_transition(from_state, to_state)
+
+        conn.execute(
+            """
+            UPDATE offering_status
+               SET state=?, updated_at=datetime('now','localtime'), updated_by=?
+             WHERE offering_id=?
+            """,
+            (to_state, changed_by, offering_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO offering_status_history
+                (offering_id, from_state, to_state, changed_by, note)
+            VALUES (?,?,?,?,?)
+            """,
+            (offering_id, from_state, to_state, changed_by, note),
+        )
+
+
+def get_offering_state_history(offering_id: int) -> list:
+    """Return list of history rows for *offering_id*, newest first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT from_state, to_state, changed_at, changed_by, note
+              FROM offering_status_history
+             WHERE offering_id=?
+             ORDER BY id DESC
+            """,
+            (offering_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_term_dashboard(semester: int | None = None, year: int | None = None) -> list:
+    """Return offerings for the term dashboard, optionally filtered by semester/year.
+
+    Each row dict includes:
+      offering_id, course_id, course_code, course_name,
+      semester, year, section_code, is_special,
+      state, instructor_main,
+      has_tqf3, tqf3_id, has_clos, has_tqf5, enrolled_count,
+      curriculum_version
+    """
+    conditions: list[str] = ["1=1"]
+    params: list = []
+    if semester is not None:
+        conditions.append("co.semester = ?")
+        params.append(semester)
+    if year is not None:
+        conditions.append("co.year = ?")
+        params.append(year)
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        rows = conn.execute(f"""
+            SELECT
+                co.id                              AS offering_id,
+                co.course_id,
+                c.code                             AS course_code,
+                c.name_th                          AS course_name,
+                co.semester,
+                co.year,
+                co.section_code,
+                co.is_special,
+                COALESCE(os.state, 'not_started')  AS state,
+                COALESCE(t3.instructor_main, '')    AS instructor_main,
+                CASE WHEN t3.id IS NOT NULL THEN 1 ELSE 0 END AS has_tqf3,
+                t3.id                              AS tqf3_id,
+                COALESCE(
+                    (SELECT COUNT(*) FROM clos cl WHERE cl.tqf3_id = t3.id), 0
+                )                                  AS clo_count,
+                CASE WHEN t5.id IS NOT NULL THEN 1 ELSE 0 END AS has_tqf5,
+                COALESCE(t5.registered_count, 0)   AS enrolled_count,
+                COALESCE(cu.version, '')            AS curriculum_version
+            FROM course_offerings co
+            JOIN courses c ON c.id = co.course_id
+            LEFT JOIN curricula cu ON cu.id = co.curriculum_id
+            LEFT JOIN offering_status os ON os.offering_id = co.id
+            LEFT JOIN tqf3 t3 ON t3.offering_id = co.id
+            LEFT JOIN tqf5 t5 ON t5.tqf3_id = t3.id
+            WHERE {where}
+            ORDER BY co.year DESC, co.semester DESC, c.code
+        """, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def bulk_open_offerings(
+    curriculum_id: int,
+    course_ids: list[int],
+    semester: int,
+    year: int,
+    section_code: str = "01",
+) -> int:
+    """Create course_offerings + offering_status for each course_id in course_ids.
+
+    Skips courses that already have an offering in (semester, year, section_code).
+    Returns count of offerings created.
+    """
+    created = 0
+    with get_conn() as conn:
+        for cid in course_ids:
+            exists = conn.execute(
+                """
+                SELECT id FROM course_offerings
+                 WHERE course_id=? AND semester=? AND year=? AND section_code=?
+                """,
+                (cid, semester, year, section_code),
+            ).fetchone()
+            if exists:
+                continue
+            cur = conn.execute(
+                "INSERT INTO course_offerings "
+                "(course_id, curriculum_id, semester, year, section_code, source_type) "
+                "VALUES (?,?,?,?,?,'catalog')",
+                (cid, curriculum_id, semester, year, section_code),
+            )
+            oid = cur.lastrowid
+            conn.execute(
+                "INSERT OR IGNORE INTO offering_status (offering_id, state) VALUES (?,'not_started')",
+                (oid,),
+            )
+            created += 1
+    return created
+
+
 if __name__ == "__main__":
     init_db()
     print("Database initialized successfully.")
