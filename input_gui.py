@@ -270,15 +270,15 @@ class TQFApp(tk.Tk):
                   background=[("selected", WHITE)],
                   foreground=[("selected", BLUE_DARK)])
 
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=0, pady=0)
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="both", expand=True, padx=0, pady=0)
 
-        self.tab_catalog = tk.Frame(nb, bg=BG)
-        self.tab_courses = tk.Frame(nb, bg=BG)
-        self.tab_import  = tk.Frame(nb, bg=BG)
-        nb.add(self.tab_catalog, text="  📚  ฐานข้อมูลหลักสูตร  ")
-        nb.add(self.tab_courses, text="  📋  รายวิชาในระบบ  ")
-        nb.add(self.tab_import,  text="  📥  นำเข้าข้อมูล  ")
+        self.tab_catalog = tk.Frame(self.nb, bg=BG)
+        self.tab_courses = tk.Frame(self.nb, bg=BG)
+        self.tab_import  = tk.Frame(self.nb, bg=BG)
+        self.nb.add(self.tab_catalog, text="  📚  ฐานข้อมูลหลักสูตร  ")
+        self.nb.add(self.tab_courses, text="  📋  รายวิชาในระบบ  ")
+        self.nb.add(self.tab_import,  text="  📥  นำเข้าข้อมูล  ")
 
         self._build_tab_courses()
         self._build_tab_catalog()
@@ -291,15 +291,19 @@ class TQFApp(tk.Tk):
         tab = self.tab_courses
 
         # ── Toolbar ──────────────────────────────────
-        self.curriculum_var = tk.StringVar(value="ทั้งหมด")
-        self.cat_term_sem_var = tk.StringVar(value="1")
+        self.curriculum_var    = tk.StringVar(value="ทั้งหมด")
+        self.cat_term_sem_var  = tk.StringVar(value="1")
         self.cat_term_year_var = tk.StringVar(value="2569")
-        toolbar = tk.Frame(tab, bg=BG)
-        toolbar.pack(fill="x", padx=16, pady=(12, 6))
+        self.t1_sem_var  = tk.StringVar(value="ทั้งหมด")
+        self.t1_year_var = tk.StringVar(value="ทั้งหมด")
 
+        toolbar = tk.Frame(tab, bg=BG)
+        toolbar.pack(fill="x", padx=16, pady=(12, 4))
+
+        # ── แถว 1: ชื่อ + filter หลักสูตร ───────────
         top_row = tk.Frame(toolbar, bg=BG)
         top_row.pack(fill="x")
-        tk.Label(top_row, text="รายวิชาทั้งหมดในฐานข้อมูล",
+        tk.Label(top_row, text="รายวิชาในระบบ",
                  bg=BG, font=FONT_H, fg=BLUE_DARK).pack(side="left")
 
         filter_frame = tk.Frame(top_row, bg=BG)
@@ -315,28 +319,62 @@ class TQFApp(tk.Tk):
                   cursor="hand2", activebackground=BLUE_DARK, activeforeground=WHITE,
                   command=self._refresh_courses).pack(side="left")
 
+        # ── แถว 2: filter ภาค/ปี ────────────────────
+        sem_row = tk.Frame(toolbar, bg=BG)
+        sem_row.pack(fill="x", pady=(6, 0))
+        tk.Label(sem_row, text="ภาคเรียน:", bg=BG, font=FONT_SM,
+                 fg=BLUE_DARK).pack(side="left")
+        t1_sem_cb = ttk.Combobox(sem_row, textvariable=self.t1_sem_var,
+                                  values=["ทั้งหมด", "1", "2", "3"],
+                                  width=6, state="readonly")
+        t1_sem_cb.pack(side="left", padx=(4, 12))
+        t1_sem_cb.bind("<<ComboboxSelected>>", lambda e: self._refresh_courses())
+
+        tk.Label(sem_row, text="ปีการศึกษา:", bg=BG, font=FONT_SM,
+                 fg=BLUE_DARK).pack(side="left")
+        t1_year_ent = tk.Entry(sem_row, textvariable=self.t1_year_var,
+                                  width=9, font=FONT, relief="solid", bd=1)
+        t1_year_ent.pack(side="left", padx=(4, 0))
+        t1_year_ent.bind("<Return>", lambda e: self._refresh_courses())
+        t1_year_ent.bind("<FocusOut>", lambda e: self._refresh_courses())
+
+        tk.Label(sem_row, text="  (Enter หรือคลิกที่อื่นเพื่อกรอง)",
+                 bg=BG, fg=GRAY, font=FONT_SM).pack(side="left")
+
+        # ── แถว 3: ปุ่มบริบทตามสถานะที่เลือก ─────────
         action_row = tk.Frame(toolbar, bg=BG)
         action_row.pack(fill="x", pady=(8, 0))
-        self.btn_edit = tk.Button(
-            action_row, text="แก้ไขข้อมูล", bg="#2E7D32", fg=WHITE,
-            font=FONT_B, relief="flat", padx=14, pady=4,
-            cursor="hand2", activebackground="#1B5E20", activeforeground=WHITE,
-            state="disabled", command=self._edit_course)
-        self.btn_edit.pack(side="left", padx=(0, 6))
+
+        self.btn_tqf3_new = tk.Button(
+            action_row, text="📝  กรอก มคอ.3", bg="#0277BD", fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
+            state="disabled", command=self._goto_tqf3)
+        self.btn_tqf3_new.pack(side="left", padx=(0, 6))
+
+        self.btn_import_grade = tk.Button(
+            action_row, text="📊  นำเข้าเกรด", bg="#00695C", fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
+            state="disabled", command=self._goto_import)
+        self.btn_import_grade.pack(side="left", padx=(0, 6))
+
         self.btn_gen = tk.Button(
-            action_row, text="สร้าง มคอ.5", bg="#6C3483", fg=WHITE,
-            font=FONT_B, relief="flat", padx=14, pady=4,
-            cursor="hand2", activebackground="#4A235A", activeforeground=WHITE,
+            action_row, text="📄  สร้าง มคอ.5", bg="#6C3483", fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
+            activebackground="#4A235A", activeforeground=WHITE,
             state="disabled", command=self._generate_tqf5)
-        self.btn_gen.pack(side="left", padx=(0, 8))
-        tk.Label(
-            action_row,
-            text="เลือกวิชาจากตารางเพื่อแก้ไขข้อมูลหรือสร้าง มคอ.5",
-            bg=BG,
-            fg=GRAY,
-            font=FONT_SM,
-            anchor="w",
-        ).pack(side="left", padx=(8, 0))
+        self.btn_gen.pack(side="left", padx=(0, 6))
+
+        self.btn_edit = tk.Button(
+            action_row, text="✏️  แก้ไขข้อมูล", bg="#2E7D32", fg=WHITE,
+            font=FONT_B, relief="flat", padx=14, pady=4, cursor="hand2",
+            activebackground="#1B5E20", activeforeground=WHITE,
+            state="disabled", command=self._edit_course)
+        self.btn_edit.pack(side="left", padx=(0, 8))
+
+        self.t1_hint = tk.Label(
+            action_row, text="← เลือกวิชาจากตารางเพื่อดูตัวเลือก",
+            bg=BG, fg=GRAY, font=FONT_SM, anchor="w")
+        self.t1_hint.pack(side="left")
 
         paned = tk.PanedWindow(tab, orient="vertical", bg=BG,
                                sashwidth=6, sashrelief="flat",
@@ -468,7 +506,7 @@ class TQFApp(tk.Tk):
             self.stu_text.pack(side="left", fill="both", expand=True)
 
     def _refresh_courses(self):
-        """โหลดข้อมูลรายวิชาจาก DB มาแสดงใน Treeview"""
+        """โหลดข้อมูลรายวิชาจาก DB มาแสดงใน Treeview พร้อม filter ภาค/ปี"""
         for item in self.tree.get_children():
             self.tree.delete(item)
         try:
@@ -482,14 +520,37 @@ class TQFApp(tk.Tk):
             curr_labels = ["ทั้งหมด"] + [f"หลักสูตร {r['version']}" for r in curricula]
             self.curriculum_combo["values"] = curr_labels
 
-            # filter condition
+            # ── build WHERE clauses ────────────────────────────────────────
+            conditions = ["1=1"]
+            params: list = []
+
             cur_filter = self.curriculum_var.get()
-            where_clause = ""
             if cur_filter != "ทั้งหมด":
                 ver = cur_filter.replace("หลักสูตร ", "").strip()
-                where_clause = f"AND cu.version = '{ver}'"
+                conditions.append("cu.version = ?")
+                params.append(ver)
+
+            sem_filter = getattr(self, "t1_sem_var", None)
+            if sem_filter and sem_filter.get() not in ("ทั้งหมด", ""):
+                conditions.append("t.semester = ?")
+                params.append(sem_filter.get())
+
+            year_filter = getattr(self, "t1_year_var", None)
+            if year_filter and year_filter.get() not in ("ทั้งหมด", ""):
+                try:
+                    conditions.append("t.year = ?")
+                    params.append(int(year_filter.get()))
+                except ValueError:
+                    pass  # ไม่ใช่ตัวเลข — ข้ามไป
+
+            where_clause = " AND ".join(conditions)
 
             # LEFT JOIN tqf3 → แสดงวิชาทุกวิชา แม้ยังไม่มี มคอ.3
+            # เมื่อ filter ภาค/ปี → ใช้ INNER JOIN tqf3 แทน ไม่งั้นวิชาไม่มี tqf3 จะยังโผล่
+            join_type = "LEFT" if (sem_filter is None or sem_filter.get() in ("ทั้งหมด", "")) \
+                               and (year_filter is None or year_filter.get() in ("ทั้งหมด", "")) \
+                        else "INNER"
+
             rows = conn.execute(f"""
                 SELECT c.id AS course_id, c.code, c.name_th,
                        c.course_type,
@@ -506,11 +567,11 @@ class TQFApp(tk.Tk):
                        CASE WHEN t5.id IS NOT NULL THEN 1 ELSE 0 END AS has_grade
                 FROM courses c
                 LEFT JOIN curricula cu ON cu.id = c.curriculum_id
-                LEFT JOIN tqf3 t ON t.course_id = c.id
+                {join_type} JOIN tqf3 t ON t.course_id = c.id
                 LEFT JOIN tqf5 t5 ON t5.tqf3_id = t.id
-                WHERE 1=1 {where_clause}
+                WHERE {where_clause}
                 ORDER BY cu.version, c.course_type, c.code, t.year DESC, t.semester DESC
-            """).fetchall()
+            """, params).fetchall()
             conn.close()
 
             for r in rows:
@@ -558,22 +619,59 @@ class TQFApp(tk.Tk):
             self.status_var.set(f"❌ โหลดข้อมูลไม่ได้: {e}")
 
     def _on_tree_select(self, event=None):
-        """คลิกเลือกแถว → โหลดรายละเอียดใน panel ล่าง"""
+        """คลิกเลือกแถว → แสดงปุ่มตามสถานะ + โหลดรายละเอียด"""
         sel = self.tree.selection()
         if not sel:
-            self.btn_gen.config(state="disabled")
-            self.btn_edit.config(state="disabled")
+            for b in (self.btn_tqf3_new, self.btn_import_grade,
+                      self.btn_gen, self.btn_edit):
+                b.config(state="disabled")
+            self.t1_hint.config(text="<- เลือกวิชาจากตารางเพื่อดูตัวเลือก")
             self._clear_detail()
             return
-        vals = self.tree.item(sel[0], "values")
-        tqf3_id  = vals[8] if len(vals) > 8 else ""
+
+        vals      = self.tree.item(sel[0], "values")
+        status    = vals[7] if len(vals) > 7 else ""
+        tqf3_id   = vals[8] if len(vals) > 8 else ""
         course_id = vals[9] if len(vals) > 9 else ""
-        self.btn_gen.config(state="normal" if tqf3_id else "disabled")
+
+        has_tqf3  = bool(tqf3_id)
+        has_grade = "✅" in (vals[5] if len(vals) > 5 else "")
+
+        # ── ปุ่มบริบทตามสถานะ ──────────────────────────────────────────
+        # กรอก มคอ.3: มีวิชาแต่ยังไม่มี มคอ.3
+        self.btn_tqf3_new.config(state="normal" if course_id else "disabled")
+
+        # นำเข้าเกรด: มี มคอ.3 แล้ว แต่ยังไม่มีเกรด
+        self.btn_import_grade.config(state="normal" if has_tqf3 and not has_grade else "disabled")
+
+        # สร้าง มคอ.5: มีทั้ง มคอ.3 และเกรดแล้ว
+        self.btn_gen.config(state="normal" if has_tqf3 and has_grade else "disabled")
+
+        # แก้ไขข้อมูล: มีวิชาในระบบ
         self.btn_edit.config(state="normal" if course_id else "disabled")
+
+        # hint
+        hint_map = {
+            "— ยังไม่มีข้อมูล": "เลือก 'กรอก มคอ.3' เพื่อเริ่มต้น",
+            "⏳ รอนำเข้าเกรด": "มคอ.3 พร้อมแล้ว — กด 'นำเข้าเกรด' ต่อ",
+            "⏳ รอนำเข้า มคอ.3": "มีเกรดแล้ว — กด 'กรอก มคอ.3' เพื่อเพิ่ม",
+        }
+        hint = next((v for k, v in hint_map.items() if k in status),
+                    "พร้อมสร้าง มคอ.5 แล้ว" if "พร้อมสร้าง" in status else "")
+        self.t1_hint.config(text=hint)
+
         if tqf3_id:
             self._load_detail(int(tqf3_id), vals)
         else:
             self._clear_detail()
+
+    def _goto_tqf3(self):
+        """ไปที่ Tab ฐานข้อมูลเพื่อจัดการ มคอ.3"""
+        self.nb.select(self.tab_catalog)
+
+    def _goto_import(self):
+        """ไปที่ Tab นำเข้าข้อมูล"""
+        self.nb.select(self.tab_import)
 
     def _on_tree_double_click(self, event=None):
         """Double-click → สลับไปแท็บ นักศึกษา"""
@@ -833,16 +931,14 @@ class TQFApp(tk.Tk):
         sem_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_catalog_offerings())
         tk.Label(offering_filter_row, text="ปีการศึกษา", bg=BG,
                  font=FONT_SM).pack(side="left", padx=(12, 4))
-        year_combo = ttk.Combobox(
+        year_ent = tk.Entry(
             offering_filter_row,
             textvariable=self.cat_term_year_var,
-            values=["2567", "2568", "2569", "2570"],
-            width=8,
-            state="normal",
+            width=8, font=FONT, relief="solid", bd=1,
         )
-        year_combo.pack(side="left")
-        year_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_catalog_offerings())
-        year_combo.bind("<Return>", lambda e: self._refresh_catalog_offerings())
+        year_ent.pack(side="left")
+        year_ent.bind("<Return>", lambda e: self._refresh_catalog_offerings())
+        year_ent.bind("<FocusOut>", lambda e: self._refresh_catalog_offerings())
         tk.Button(
             offering_filter_row, text="แสดงข้อมูล", bg="#455A64", fg=WHITE,
             font=FONT_B, relief="flat", padx=12, pady=4,
@@ -876,6 +972,8 @@ class TQFApp(tk.Tk):
 
         action_row = tk.Frame(toolbar, bg=BG)
         action_row.pack(fill="x", pady=(8, 0))
+
+        # ── ปุ่มหลัก (เสมอมองเห็น) ─────────────────────
         tk.Button(action_row, text="เพิ่มวิชา", bg=GREEN, fg=WHITE,
                   font=FONT_B, relief="flat", padx=14, pady=4,
                   cursor="hand2", activebackground="#0B5E0B", activeforeground=WHITE,
@@ -885,21 +983,6 @@ class TQFApp(tk.Tk):
             font=FONT_B, relief="flat", padx=12, pady=4,
             cursor="hand2", state="disabled", command=self._edit_catalog_course)
         self.btn_cat_edit.pack(side="left", padx=(0, 6))
-        self.btn_cat_clo = tk.Button(
-            action_row, text="แก้ไข CLO", bg="#1565C0", fg=WHITE,
-            font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_course_clos)
-        self.btn_cat_clo.pack(side="left", padx=(0, 6))
-        self.btn_cat_llo = tk.Button(
-            action_row, text="LLO", bg="#0277BD", fg=WHITE,
-            font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_course_llos)
-        self.btn_cat_llo.pack(side="left", padx=(0, 6))
-        self.btn_cat_plan = tk.Button(
-            action_row, text="แผนการสอน", bg="#00838F", fg=WHITE,
-            font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_course_teaching_plan)
-        self.btn_cat_plan.pack(side="left", padx=(0, 6))
         self.btn_cat_gen3 = tk.Button(
             action_row, text="สร้าง มคอ.3", bg="#6C3483", fg=WHITE,
             font=FONT_B, relief="flat", padx=12, pady=4,
@@ -910,34 +993,56 @@ class TQFApp(tk.Tk):
             font=FONT_B, relief="flat", padx=12, pady=4,
             cursor="hand2", state="disabled", command=self._delete_catalog_course)
         self.btn_cat_del.pack(side="left", padx=(0, 6))
+
+        # ── ปุ่มรอง — เก็บเป็น attr เพื่อ state management แต่ไม่ pack ในแถบ ──
+        self.btn_cat_clo = tk.Button(
+            action_row, text="แก้ไข CLO", bg="#1565C0", fg=WHITE,
+            font=FONT_B, relief="flat", cursor="hand2",
+            state="disabled", command=self._edit_course_clos)
+        self.btn_cat_llo = tk.Button(
+            action_row, text="LLO", bg="#0277BD", fg=WHITE,
+            font=FONT_B, relief="flat", cursor="hand2",
+            state="disabled", command=self._edit_course_llos)
+        self.btn_cat_plan = tk.Button(
+            action_row, text="แผนการสอน", bg="#00838F", fg=WHITE,
+            font=FONT_B, relief="flat", cursor="hand2",
+            state="disabled", command=self._edit_course_teaching_plan)
         self.btn_cat_res = tk.Button(
             action_row, text="ทรัพยากร", bg="#00695C", fg=WHITE,
-            font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_course_resources)
-        self.btn_cat_res.pack(side="left", padx=(0, 6))
+            font=FONT_B, relief="flat", cursor="hand2",
+            state="disabled", command=self._edit_course_resources)
         self.btn_cat_staff = tk.Button(
             action_row, text="บุคลากร มคอ.3", bg="#4527A0", fg=WHITE,
+            font=FONT_B, relief="flat", cursor="hand2",
+            state="disabled", command=self._edit_course_staff)
+
+        # ── "เพิ่มเติม ▼" dropdown ──────────────────────
+        self.cat_more_menu = tk.Menu(
+            action_row, tearoff=0, bg=WHITE, fg="#212121",
+            activebackground=BLUE, activeforeground=WHITE, font=FONT)
+        # รายการที่ขึ้นกับ selection (5 รายการแรก)
+        _sel_entries = [
+            ("แก้ไข CLO",      self._edit_course_clos),
+            ("LLO",            self._edit_course_llos),
+            ("แผนการสอน",     self._edit_course_teaching_plan),
+            ("ทรัพยากร",      self._edit_course_resources),
+            ("บุคลากร มคอ.3", self._edit_course_staff),
+        ]
+        for label, cmd in _sel_entries:
+            self.cat_more_menu.add_command(label=label, command=cmd, state="disabled")
+        self.cat_more_menu.add_separator()
+        self.cat_more_menu.add_command(label="PLO",
+                                       command=self._manage_plos)
+        self.cat_more_menu.add_command(label="ข้อมูลหลักสูตร",
+                                       command=self._show_curriculum_overview)
+        self._cat_more_sel_count = len(_sel_entries)  # how many entries need selection
+
+        self.btn_cat_more = tk.Menubutton(
+            action_row, text="เพิ่มเติม ▼", bg="#546E7A", fg=WHITE,
             font=FONT_B, relief="flat", padx=12, pady=4,
-            cursor="hand2", state="disabled", command=self._edit_course_staff)
-        self.btn_cat_staff.pack(side="left", padx=(0, 6))
-        self.btn_cat_gen3.pack_forget()
-        self.btn_cat_staff.pack_forget()
-        tk.Button(action_row, text="PLO", bg="#5C4033", fg=WHITE,
-                  font=FONT_B, relief="flat", padx=12, pady=4,
-                  cursor="hand2", activebackground="#3E2723", activeforeground=WHITE,
-                  command=self._manage_plos).pack(side="left", padx=(12, 6))
-        tk.Button(action_row, text="ข้อมูลหลักสูตร", bg="#37474F", fg=WHITE,
-                  font=FONT_B, relief="flat", padx=12, pady=4,
-                  cursor="hand2", activebackground="#263238", activeforeground=WHITE,
-                  command=self._show_curriculum_overview).pack(side="left")
-        tk.Label(
-            action_row,
-            text="ปุ่มจัดการหลักอยู่แถวนี้เพื่อไม่ให้เบียดพื้นที่ตาราง",
-            bg=BG,
-            fg=GRAY,
-            font=FONT_SM,
-            anchor="w",
-        ).pack(side="left", padx=(12, 0))
+            cursor="hand2", menu=self.cat_more_menu,
+            activebackground="#37474F", activeforeground=WHITE)
+        self.btn_cat_more.pack(side="left", padx=(8, 0))
 
         paned = tk.PanedWindow(tab, orient="horizontal", bg=BG,
                                sashwidth=6, sashrelief="flat", opaqueresize=True)
@@ -1336,12 +1441,16 @@ class TQFApp(tk.Tk):
         state = "normal" if sel else "disabled"
         self.btn_cat_edit.config(state=state)
         self.btn_cat_del.config(state=state)
+        self.btn_cat_gen3.config(state=state)
+        # hidden button attrs — keep state in sync even though not packed in toolbar
         self.btn_cat_clo.config(state=state)
         self.btn_cat_llo.config(state=state)
         self.btn_cat_plan.config(state=state)
-        self.btn_cat_gen3.config(state=state)
         self.btn_cat_res.config(state=state)
         self.btn_cat_staff.config(state=state)
+        # dropdown menu entries
+        for idx in range(self._cat_more_sel_count):
+            self.cat_more_menu.entryconfigure(idx, state=state)
         self.btn_cat_add_offering.config(state=state)
         if hasattr(self, "btn_cat_add_offering_visible"):
             self.btn_cat_add_offering_visible.config(state=state)
@@ -2290,12 +2399,14 @@ class TQFApp(tk.Tk):
             self.cat_tree.selection_remove(item)
         self.btn_cat_edit.config(state="disabled")
         self.btn_cat_del.config(state="disabled")
+        self.btn_cat_gen3.config(state="disabled")
         self.btn_cat_clo.config(state="disabled")
         self.btn_cat_llo.config(state="disabled")
         self.btn_cat_plan.config(state="disabled")
-        self.btn_cat_gen3.config(state="disabled")
         self.btn_cat_res.config(state="disabled")
         self.btn_cat_staff.config(state="disabled")
+        for idx in range(self._cat_more_sel_count):
+            self.cat_more_menu.entryconfigure(idx, state="disabled")
         self.btn_cat_add_offering.config(state="disabled")
         self.btn_cat_offering_gen3.config(state="disabled")
         self.btn_cat_offering_staff.config(state="disabled")
@@ -2729,11 +2840,9 @@ class CourseOfferingDialog(tk.Toplevel):
 
         tk.Label(form, text="ปีการศึกษา *", bg=BG, font=FONT_B).grid(row=1, column=0, sticky="w", pady=7)
         self.year_var = tk.StringVar(value=str(year_default or "2569"))
-        ttk.Combobox(
-            form, textvariable=self.year_var,
-            values=["2567", "2568", "2569", "2570"],
-            width=10, state="normal"
-        ).grid(row=1, column=1, sticky="w", padx=10)
+        tk.Entry(form, textvariable=self.year_var,
+                 width=10, font=FONT, relief="solid", bd=1
+                 ).grid(row=1, column=1, sticky="w", padx=10)
 
         tk.Label(form, text="ตอนเรียน *", bg=BG, font=FONT_B).grid(row=2, column=0, sticky="w", pady=7)
         self.section_var = tk.StringVar(value="N01")
